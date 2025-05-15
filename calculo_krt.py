@@ -107,21 +107,23 @@ def construir_matriz_A(points_l, points_d):
 
 def eight_point_algorithm(points_l, points_d, T1, T2):
     A = construir_matriz_A(points_l, points_d)
-    print("Forma de A:", A.shape)
-    print("Valores de A:", A[:5])
+    #print("Forma de A:", A.shape)
+    #print("Valores de A:", A[:5])
     U,S,Vt = np.linalg.svd(A)
     V = Vt.T
     z = V[-1]
     F_vec = z
-    F = np.reshape(F_vec, (3, 3))
+    F = np.reshape(F_vec, (3, 3)) 
+    F = F / F[2,2]
 
     Uf, Sf, Vtf = np.linalg.svd(F)
-    print("Valores singulares de F antes de forzar rango 2:", Sf)
-    Sf[-1] = np.clip(Sf[-1], 1e-8, None)  # anular el menor valor singular
-    F_rank2 = Uf @ np.diag(Sf) @ Vtf
+    #print("Valores singulares de F antes de forzar rango 2:", Sf)
+    Sf[-1] = 0  # anular el menor valor singular
+    F_rank2 = Uf @ np.diag(Sf) @ Vtf 
     F_denorm = T2.T @ F_rank2 @ T1
-    print("Matriz fundamental antes de desnormalizar:", F_rank2)
-    print("Matriz fundamental después de desnormalizar:", F_denorm)
+    F_denorm = F_denorm/F_denorm[2,2]
+    #print("Matriz fundamental antes de desnormalizar:", F_rank2)
+    #print("Matriz fundamental después de desnormalizar:", F_denorm)
 
 
 
@@ -170,7 +172,7 @@ def estima_error(puntos_l, puntos_d, F):
     recta_d = recta_d / np.linalg.norm(recta_d[:2], axis=0)
 
     # Calculamos la distancia punto-línea epipolar
-    dpd_l = np.abs(np.sum(recta_l.T * puntos_l_h, axis=1))
+    dpd_l = np.abs(np.sum(recta_l.T * puntos_l_h, axis=1)) #PREGUNTAR COMO VA ESTO DE DPd
     dpd_d = np.abs(np.sum(recta_d.T * puntos_d_h, axis=1))
 
     # Error epipolar total
@@ -185,15 +187,15 @@ def ransac(puntos_clave_l, puntos_clave_d, iter, t):
     C_est = []
     C = []
     max_inliers = 0
-    print(len(puntos_clave_l))
-    print(len(puntos_clave_d))
+    #print(len(puntos_clave_l))
+    #print(len(puntos_clave_d))
     puntos_normalizados_l, T1 = normalizar_puntos(puntos_clave_l)
     puntos_normalizados_d, T2 = normalizar_puntos(puntos_clave_d)
-    print(len(puntos_normalizados_l))
-    print(len(puntos_normalizados_d))
-    print("Coordenadas puntos_normalizados_l:", puntos_normalizados_l[:5])  
-    print("Coordenadas puntos_normalizados_d:", puntos_normalizados_d[:5])
-
+    #print(len(puntos_normalizados_l))
+    #print(len(puntos_normalizados_d))
+    #print("Coordenadas puntos_normalizados_l:", puntos_normalizados_l[:5])  
+    #print("Coordenadas puntos_normalizados_d:", puntos_normalizados_d[:5])
+    print("Empezamos RANSAC")
     for _ in range(iter):
         idx = random.sample(range(len(puntos_normalizados_d)), 8)
         sample_l = puntos_normalizados_l[idx]
@@ -205,7 +207,7 @@ def ransac(puntos_clave_l, puntos_clave_d, iter, t):
         #min_puntos = min(len(puntos_normalizados_l), len(puntos_normalizados_d))
         #puntos_normalizados_l = puntos_normalizados_l[:min_puntos]
         #puntos_normalizados_d = puntos_normalizados_d[:min_puntos]
-        F = eight_point_algorithm(puntos_normalizados_l, puntos_normalizados_d, T1, T2)
+        F = eight_point_algorithm(sample_l, sample_d, T1, T2) #poner aqui dentro la normalizacion de puntos
         inliers = 0
         for i in range(len(puntos_clave_l)):
             error = estima_error(sample_l, sample_d, F)
@@ -225,45 +227,53 @@ def ransac(puntos_clave_l, puntos_clave_d, iter, t):
     print(C_est_np)
     print("F_est =")
     print(F_est)
-    print("Matriz de transformación T1:", T1)
-    print("Matriz de transformación T2:", T2)
+    #print("Matriz de transformación T1:", T1)
+    #print("Matriz de transformación T2:", T2)
+    print("Terminamos RANSAC")
     return F_est, C_est_np
         
 
-def dibujar_matching(img_l, img_d, puntos):
+def dibujar_matching(img_l, img_d, puntos_l, puntos_d, F):
     """
-    Dibuja líneas de correspondencia entre los puntos filtrados de img_l e img_d.
+    Dibuja líneas epipolares entre los puntos clave de img_l e img_d usando la matriz fundamental F.
     """
-    print("Número de correspondencias en puntos:", len(puntos))
-    print("Estructura de puntos:", type(puntos), np.array(puntos).shape)
-    print("Ejemplo de puntos:", puntos[:5])
-    # Convertimos imágenes a formato RGB para evitar errores con OpenCV
-    img_l_rgb = cv2.cvtColor(img_l, cv2.COLOR_BGR2RGB)
-    img_d_rgb = cv2.cvtColor(img_d, cv2.COLOR_BGR2RGB)
+    # Convertimos imágenes a formato RGB
+    img_l_rgb = np.flip(img_l, axis=-1)  # Invertir el canal de color si es necesario
+    img_d_rgb = np.flip(img_d, axis=-1)
 
     # Concatenamos ambas imágenes horizontalmente
-    altura_l, ancho_l = img_l.shape[:2]
-    altura_d, ancho_d = img_d.shape[:2]
-    altura_max = max(altura_l, altura_d)
+    altura_max = max(img_l.shape[0], img_d.shape[0])
+    ancho_total = img_l.shape[1] + img_d.shape[1]
 
     fig, ax = plt.subplots(figsize=(12, 6))
-    img_combinada = np.zeros((altura_max, ancho_l + ancho_d, 3), dtype=np.uint8)
-    img_combinada[:altura_l, :ancho_l] = img_l_rgb
-    img_combinada[:altura_d, ancho_l:] = img_d_rgb
-    
+    img_combinada = np.zeros((altura_max, ancho_total, 3), dtype=np.uint8)
+    img_combinada[:img_l.shape[0], :img_l.shape[1]] = img_l_rgb
+    img_combinada[:img_d.shape[0], img_l.shape[1]:] = img_d_rgb
+
     ax.imshow(img_combinada)
 
-    # Dibujamos las líneas de correspondencia
-    for punto_l, punto_d in puntos:  # Cada tupla representa los puntos en ambas imágenes
-        punto_l = tuple(punto_l.astype(int))  # Convertimos a enteros correctamente
-        punto_d = tuple((punto_d + np.array([ancho_l, 0])).astype(int))  # Ajustamos posición y convertimos
+    # Dibujar líneas epipolares
+    for punto_l, punto_d in zip(puntos_l, puntos_d):
+        # Convertimos los puntos a coordenadas homogéneas
+        punto_l_h = np.append(punto_l, 1)
+        punto_d_h = np.append(punto_d, 1)
 
-        ax.plot([punto_l[0], punto_d[0]], [punto_l[1], punto_d[1]], color='lime', linewidth=0.8)
+        # Calcular la línea epipolar en la segunda imagen
+        linea_epipolar = F @ punto_l_h  # F * punto en la imagen izquierda
+
+        # Calcular puntos extremos de la línea epipolar
+        x = np.linspace(0, img_d.shape[1], num=2)
+        y = -(linea_epipolar[0] * x + linea_epipolar[2]) / linea_epipolar[1]
+
+        # Ajustar al ancho total (imagen derecha está desplazada)
+        x += img_l.shape[1]
+
+        ax.plot([punto_l[0], punto_d[0] + img_l.shape[1]], [punto_l[1], punto_d[1]], color="lime", linewidth=0.8)
+        ax.plot(x, y, linestyle="--", color="red", linewidth=0.7)  # Línea epipolar roja
 
     # Configuración de la visualización
-    ax.set_title("Matching entre puntos clave (RANSAC)")
+    ax.set_title("Líneas epipolares y correspondencias")
     ax.axis("off")
-
     plt.show()
 
 
@@ -273,19 +283,38 @@ def main():
     img_d = cv2.imread('im_d.jpeg', cv2.IMREAD_COLOR)
     krt_descomposition(P)
     puntos_clave_l, puntos_clave_d = correspendencias(img_l,img_d)
-    r = 75
-    t = 630
+    r = 150
+    t = 700
     F, puntos = ransac(puntos_clave_l, puntos_clave_d, r, t)
-    
+    print(f"Puntos: {puntos[:40]}")
     # Verificar si F_est satisface la ecuación epipolar
-    puntos_clave_l_h = np.hstack((puntos_clave_l, np.ones((puntos_clave_l.shape[0], 1))))
-    puntos_clave_d_h = np.hstack((puntos_clave_d, np.ones((puntos_clave_d.shape[0], 1))))
+
+    # Separar todos los puntos en dos listas distintas
+    puntos_l_list, puntos_d_list = zip(*puntos)
+
+    puntos_l = np.vstack(puntos_l_list)  # Apila todos los puntos en una sola estructura
+    puntos_d = np.vstack(puntos_d_list)  # Hace lo mismo para los puntos de la segunda imagen
+
+    print(f"Puntos L: {puntos_l[:9]}")
+    print(f"Puntos D: {puntos_d[:9]}")
+
+    puntos_l_h = np.hstack((puntos_l, np.ones((puntos_l.shape[0], 1))))
+    puntos_d_h = np.hstack((puntos_d, np.ones((puntos_d.shape[0], 1))))
+
+    #print("Forma de puntos_l_h:", puntos_l_h.shape)
+    #print("Forma de puntos_d_h:", puntos_d_h.shape)
+
+
+    # Imprimir las primeras 5 filas de cada uno
+    print("Primeras 5 filas de puntos_l:", puntos_l[:5])
+    print("Primeras 5 filas de puntos_d:", puntos_d[:5])
+
     errores_epipolares = [
-    np.abs(p_d_h.T @ F @ p_l_h) for p_l_h, p_d_h in zip(puntos_clave_l_h[:50], puntos_clave_d_h[:50])
+    np.abs(p_d_h.T @ F @ p_l_h) for p_l_h, p_d_h in zip(puntos_l_h[:50], puntos_d_h[:50])
     ]
     print("Error epipolar promedio:", np.mean(errores_epipolares))
 
-    dibujar_matching(img_l, img_d, puntos)
+    dibujar_matching(img_l, img_d, puntos_l, puntos_d, F)
 
 
 if __name__ == '__main__':
