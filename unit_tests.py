@@ -165,26 +165,31 @@ def ransac(puntos_clave_l, puntos_clave_d, iter, t):
         sample_l = puntos_clave_l[idx]
         sample_d = puntos_clave_d[idx]
 
-        sample_l, T1 = normalizar_puntos(sample_l)
-        sample_d, T2 = normalizar_puntos(sample_d)
+        sample_l, T_1 = normalizar_puntos(sample_l)
+        sample_d, T_2 = normalizar_puntos(sample_d)
 
-        F = eight_point_algorithm(sample_l, sample_d, T1, T2) #poner aqui dentro la normalizacion de puntos
+        F = eight_point_algorithm(sample_l, sample_d, T_1, T_2) #poner aqui dentro la normalizacion de puntos
         inliers = 0
-
+        C = []
+        
         for i, (pl_n, pd_n) in enumerate(zip(puntos_normalizados_l, puntos_normalizados_d)):
             error = estima_error(np.array([pl_n]), np.array([pd_n]), F)
             if error < t:
                 inliers += 1
-                if (tuple(puntos_clave_l[i]), tuple(puntos_clave_d[i])) not in C:
-                    C.append((tuple(puntos_clave_l[i]), tuple(puntos_clave_d[i])))
+                #if (tuple(puntos_clave_l[i]), tuple(puntos_clave_d[i])) not in C:
+                #   C.append((tuple(puntos_clave_l[i]), tuple(puntos_clave_d[i])))
+                pl = tuple(map(float, puntos_clave_l[i]))
+                pd = tuple(map(float, puntos_clave_d[i]))
+                C.append((pl, pd))
 
-        if len(C) > len(C_est) and best_error > error:
+        # if len(C) > len(C_est) and best_error > error:
+        if len(C) > len(C_est):
             print("Mejor error hasta el momento:", error)
             best_error = error
-            C_est = np.array(C)
-            C_est_np = np.array(C_est, dtype=object)
+            #C_est = np.array(C)
+            #C_est_np = (np.array(C_est, dtype=object)).copy()
+            C_est_np = (np.array(C)).copy()
             F_est = F
-            C = []
             if inliers > max_inliers:
                 max_inliers = inliers
     #Filtrar luego para quedarse con las rectas con la orientación mas similar / común
@@ -325,35 +330,92 @@ def visualizar_lineas_epipolares(img_d, img_i, l_izq, l_der, punto_izq, punto_de
     plt.tight_layout()
     plt.show()
 
+def visualizar_lineas_epipolares_listas(img_d, img_i, lineas_izq, lineas_der, puntos_izq, puntos_der):
+    """
+    Visualiza múltiples líneas epipolares en ambas imágenes a partir de listas de líneas y puntos.
+
+    Parámetros:
+    - img_d: Imagen derecha.
+    - img_i: Imagen izquierda.
+    - lineas_izq: Lista de líneas epipolares en la imagen izquierda.
+    - lineas_der: Lista de líneas epipolares en la imagen derecha.
+    - puntos_izq: Lista de puntos (x, y, 1) en la imagen izquierda.
+    - puntos_der: Lista de puntos (x, y, 1) en la imagen derecha.
+    """
+
+    def dibujar_linea(ax, line, shape, color='green'):
+        a, b, c = line
+        height, width = shape[:2]
+
+        if abs(b) > 1e-6:
+            x_vals = np.array([0, width])
+            y_vals = -(a * x_vals + c) / b
+        else:
+            y_vals = np.array([0, height])
+            x_vals = -(b * y_vals + c) / a
+
+        ax.plot(x_vals, y_vals, color=color, linestyle='--', linewidth=1)
+        ax.set_xlim(0, width)
+        ax.set_ylim(height, 0)  # Invertir eje Y
+
+    fig, axs = plt.subplots(1, 2, figsize=(12, 6))
+
+    axs[0].imshow(img_i, cmap='gray')
+    axs[0].set_title('Imagen Izquierda')
+    axs[0].axis('off')
+
+    axs[1].imshow(img_d, cmap='gray')
+    axs[1].set_title('Imagen Derecha')
+    axs[1].axis('off')
+
+    colores = ['red', 'green', 'blue', 'magenta', 'cyan', 'orange']
+
+    for i in range(len(lineas_izq)):
+        color = colores[i % len(colores)]
+
+        punto_i = puntos_izq[i][:2]
+        punto_d = puntos_der[i][:2]
+
+        axs[0].scatter(*punto_i, color=color, label=f'Punto Izq #{i}')
+        dibujar_linea(axs[0], lineas_izq[i], img_i.shape, color=color)
+
+        axs[1].scatter(*punto_d, color=color, label=f'Punto Der #{i}')
+        dibujar_linea(axs[1], lineas_der[i], img_d.shape, color=color)
+
+    axs[0].legend()
+    axs[1].legend()
+    plt.tight_layout()
+    plt.show()
+
 def visualizar_puntos(img_i, img_d, punto_i, punto_d):
-        """
-        Dibuja dos gráficos simultáneos con los puntos en sus respectivas imágenes.
+    """
+    Dibuja dos gráficos simultáneos con los puntos en sus respectivas imágenes.
             
-        Parámetros:
-        - img_i: Imagen izquierda.
-        - img_d: Imagen derecha.
-        - punto_i: Coordenadas del punto clave en la imagen izquierda [x, y].
-        - punto_d: Coordenadas del punto clave en la imagen derecha [x, y].
-        """
+    Parámetros:
+    - img_i: Imagen izquierda.
+    - img_d: Imagen derecha.
+    - punto_i: Coordenadas del punto clave en la imagen izquierda [x, y].
+    - punto_d: Coordenadas del punto clave en la imagen derecha [x, y].
+    """
                 
-        fig, axs = plt.subplots(1, 2, figsize=(12, 6))
+    fig, axs = plt.subplots(1, 2, figsize=(12, 6))
                 
-        # Imagen Izquierda
-        axs[0].imshow(img_i, cmap='gray')
-        axs[0].scatter(punto_i[0], punto_i[1], color='red', marker='o', label="Punto en Imagen Izquierda")
-        axs[0].set_title("Imagen Izquierda")
-        axs[0].axis("off")
-        axs[0].legend()
+    # Imagen Izquierda
+    axs[0].imshow(img_i, cmap='gray')
+    axs[0].scatter(punto_i[0], punto_i[1], color='red', marker='o', label="Punto en Imagen Izquierda")
+    axs[0].set_title("Imagen Izquierda")
+    axs[0].axis("off")
+    axs[0].legend()
                 
-        # Imagen Derecha
-        axs[1].imshow(img_d, cmap='gray')
-        axs[1].scatter(punto_d[0], punto_d[1], color='blue', marker='o', label="Punto en Imagen Derecha")
-        axs[1].set_title("Imagen Derecha")
-        axs[1].axis("off")
-        axs[1].legend()
+    # Imagen Derecha
+    axs[1].imshow(img_d, cmap='gray')
+    axs[1].scatter(punto_d[0], punto_d[1], color='blue', marker='o', label="Punto en Imagen Derecha")
+    axs[1].set_title("Imagen Derecha")
+    axs[1].axis("off")
+    axs[1].legend()
                 
-        plt.tight_layout()
-        plt.show()
+    plt.tight_layout()
+    plt.show()
 
 
 def main():
@@ -632,25 +694,28 @@ def main():
             print(f"Linea epipolar 1 = {l11}")
             print(f"Linea epipolar 2 = {l12}")
 
-            punto_21 = puntos_1[20]
-            punto_22 = puntos_2[20]
+            punto_21 = puntos_1[50]
+            punto_22 = puntos_2[50]
 
-            l21 = E.T @ punto_22
-            l22 = E @ punto_21
+            punto_31 = puntos_1[100]
+            punto_32 = puntos_2[100]
 
-            punto_31 = puntos_1[30]
-            punto_32 = puntos_2[30]
-            l31 = E.T @ punto_32
-            l32 = E @ punto_31
 
-            punto_41 = puntos_1[40]
-            punto_42 = puntos_2[40]
-            l41 = E.T @ punto_42
-            l42 = E @ punto_41
+            punto_41 = puntos_1[150]
+            punto_42 = puntos_2[150]
+
+            puntos_izq = [punto_11, punto_21, punto_31, punto_41]
+            puntos_der = [punto_12, punto_22, punto_32, punto_42]
+            lineas_izq = [E.T @ p for p in puntos_der]  # líneas en imagen izquierda desde puntos derechos
+            lineas_der = [E @ p for p in puntos_izq]    # líneas en imagen derecha desde puntos izquierdos
+
+
 
             visualizar_puntos(img_l, img_d, punto_11, punto_12)
 
             visualizar_lineas_epipolares(img_d, img_l, l11, l12, punto_11, punto_12)
+
+            visualizar_lineas_epipolares_listas(img_d, img_l, lineas_izq, lineas_der, puntos_izq, puntos_der)
             
 
         switch = {
