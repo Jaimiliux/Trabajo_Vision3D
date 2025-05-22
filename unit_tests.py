@@ -143,7 +143,7 @@ def ransac(puntos_clave_l, puntos_clave_d, iter, t):
         Sf[-1] = 0  # anular el menor valor singular
         F_rank2 = Uf @ np.diagflat(Sf) @ Vtf
         F_denorm = T2.T @ F_rank2 @ T1    
-        #F_denorm = F_denorm/F_denorm[2,2] # PREGUNTAR EN CLASE por que denormalizar y normalizar.
+        F_denorm = F_denorm/F_denorm[2,2] # PREGUNTAR EN CLASE por que denormalizar y normalizar.
         #F_denorm = F_rank2
         
         return F_denorm
@@ -407,7 +407,7 @@ def main():
 
         def caso_5():
             nonlocal F, puntos, t
-            r = 5000
+            r = 1000
             F, puntos = ransac(puntos_clave_l, puntos_clave_d, r, t)
             return f"Mejor matriz F = \n {F}, con primeras 4 correspondencias = \n{puntos[:4]}"
         
