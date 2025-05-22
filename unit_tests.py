@@ -325,6 +325,36 @@ def visualizar_lineas_epipolares(img_d, img_i, l_izq, l_der, punto_izq, punto_de
     plt.tight_layout()
     plt.show()
 
+def visualizar_puntos(img_i, img_d, punto_i, punto_d):
+        """
+        Dibuja dos gráficos simultáneos con los puntos en sus respectivas imágenes.
+            
+        Parámetros:
+        - img_i: Imagen izquierda.
+        - img_d: Imagen derecha.
+        - punto_i: Coordenadas del punto clave en la imagen izquierda [x, y].
+        - punto_d: Coordenadas del punto clave en la imagen derecha [x, y].
+        """
+                
+        fig, axs = plt.subplots(1, 2, figsize=(12, 6))
+                
+        # Imagen Izquierda
+        axs[0].imshow(img_i, cmap='gray')
+        axs[0].scatter(punto_i[0], punto_i[1], color='red', marker='o', label="Punto en Imagen Izquierda")
+        axs[0].set_title("Imagen Izquierda")
+        axs[0].axis("off")
+        axs[0].legend()
+                
+        # Imagen Derecha
+        axs[1].imshow(img_d, cmap='gray')
+        axs[1].scatter(punto_d[0], punto_d[1], color='blue', marker='o', label="Punto en Imagen Derecha")
+        axs[1].set_title("Imagen Derecha")
+        axs[1].axis("off")
+        axs[1].legend()
+                
+        plt.tight_layout()
+        plt.show()
+
 
 def main():
     img_l = cv2.imread('im_i.jpg', cv2.IMREAD_COLOR)
@@ -377,7 +407,7 @@ def main():
 
         def caso_5():
             nonlocal F, puntos, t
-            r = 10000
+            r = 5000
             F, puntos = ransac(puntos_clave_l, puntos_clave_d, r, t)
             return f"Mejor matriz F = \n {F}, con primeras 4 correspondencias = \n{puntos[:4]}"
         
@@ -553,36 +583,6 @@ def main():
             return strin1 + strin2 + strin3
         
         def caso_13():
-            def visualizar_puntos(img_i, img_d, punto_i, punto_d):
-                """
-                Dibuja dos gráficos simultáneos con los puntos en sus respectivas imágenes.
-                
-                Parámetros:
-                - img_i: Imagen izquierda.
-                - img_d: Imagen derecha.
-                - punto_i: Coordenadas del punto clave en la imagen izquierda [x, y].
-                - punto_d: Coordenadas del punto clave en la imagen derecha [x, y].
-                """
-                
-                fig, axs = plt.subplots(1, 2, figsize=(12, 6))
-                
-                # Imagen Izquierda
-                axs[0].imshow(img_i, cmap='gray')
-                axs[0].scatter(punto_i[0], punto_i[1], color='red', marker='o', label="Punto en Imagen Izquierda")
-                axs[0].set_title("Imagen Izquierda")
-                axs[0].axis("off")
-                axs[0].legend()
-                
-                # Imagen Derecha
-                axs[1].imshow(img_d, cmap='gray')
-                axs[1].scatter(punto_d[0], punto_d[1], color='blue', marker='o', label="Punto en Imagen Derecha")
-                axs[1].set_title("Imagen Derecha")
-                axs[1].axis("off")
-                axs[1].legend()
-                
-                plt.tight_layout()
-                plt.show()
-            
             nonlocal F, puntos_l, puntos_d
             puntos_1, puntos_2 = encontrar_mejor_punto(puntos_l, puntos_d)
 
@@ -612,10 +612,45 @@ def main():
             l41 = F.T @ punto_42
             l42 = F @ punto_41
 
-            #visualizar_puntos(img_l, img_d, punto_11, punto_12)
+            visualizar_puntos(img_l, img_d, punto_11, punto_12)
 
             visualizar_lineas_epipolares(img_d, img_l, l11, l12, punto_11, punto_12)
 
+
+        def caso_14():
+            
+            nonlocal E, puntos_l, puntos_d
+            puntos_1, puntos_2 = encontrar_mejor_punto(puntos_l, puntos_d)
+
+            punto_11 = puntos_1[10]
+            punto_12 = puntos_2[10]
+            l11 = E.T @ punto_12
+            l12 = E @ punto_11
+            print(f"Punto 1 = {punto_11}")
+            print(f"Punto 2 = {punto_12}")
+
+            print(f"Linea epipolar 1 = {l11}")
+            print(f"Linea epipolar 2 = {l12}")
+
+            punto_21 = puntos_1[20]
+            punto_22 = puntos_2[20]
+
+            l21 = E.T @ punto_22
+            l22 = E @ punto_21
+
+            punto_31 = puntos_1[30]
+            punto_32 = puntos_2[30]
+            l31 = E.T @ punto_32
+            l32 = E @ punto_31
+
+            punto_41 = puntos_1[40]
+            punto_42 = puntos_2[40]
+            l41 = E.T @ punto_42
+            l42 = E @ punto_41
+
+            visualizar_puntos(img_l, img_d, punto_11, punto_12)
+
+            visualizar_lineas_epipolares(img_d, img_l, l11, l12, punto_11, punto_12)
             
 
         switch = {
@@ -632,10 +667,11 @@ def main():
             "10": caso_10,
             "11": caso_11,
             "12": caso_12,
-            "13": caso_13
+            "13": caso_13,
+            "14": caso_14
         }
 
-        opcion = input("Elige una opción (0-13): ")
+        opcion = input("Elige una opción (0-14): ")
         resultado = switch.get(opcion, lambda: "Opción no válida")()
         print(resultado)
 
