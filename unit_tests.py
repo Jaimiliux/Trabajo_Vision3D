@@ -9,9 +9,7 @@ def krt_descomposition(P):
     Q, U = np.linalg.qr(np.linalg.inv(P[:3, :3]))
     print(f'resultado 1 Q = {Q}')
     print(f'resultado 1 U = {U}')
-    #D = np.diag(np.sign(np.diag(U)) * np.array([[-1, 0, 0],
-                                                #[0, -1, 0],
-                                                #[0, 0, 1]]))
+    #D = np.diag(np.sign(np.diag(U)) * np.array([-1, -1, 1]))
     #print(f'resultado 1 D = {D}')
     #Q = Q * D
     print(f'resultado 2 Q = {Q}')
@@ -36,7 +34,7 @@ def krt_descomposition(P):
     return K, R, t
 
 def reconstruir_P(K, R, t):
-    return K @ np.hstack((R, t[:,2].reshape(-1, 1)))
+    return K @ np.hstack((R, t[:,-1].reshape(-1, 1)))
 
 def correspendencias(img_l,img_d):
     # Creamos un SIFT detector
@@ -138,15 +136,20 @@ def ransac(puntos_clave_l, puntos_clave_d, iter, t):
         #Normalizamos F
         F = F / F[2,2]
 
-        Uf, Sf, Vtf = np.linalg.svd(F)
+        Uf, Sf, Vtf = np.linalg.svd(F) #!!!Normalizar valores singulares
+        #tan_v = Sf[1]/Sf[0]
+        #cos_v = 1 / np.sqrt(1 + tan_v**2)
+        #sin_v = tan_v * cos_v
+
+        #Sf[0] = cos_v
+        #Sf[1] = sin_v
 
         Sf[-1] = 0  # anular el menor valor singular
         F_rank2 = Uf @ np.diagflat(Sf) @ Vtf
         F_denorm = T2.T @ F_rank2 @ T1    
-        F_denorm = F_denorm/F_denorm[2,2] # PREGUNTAR EN CLASE por que denormalizar y normalizar.
-        #F_denorm = F_rank2
+        F_norm = F_denorm/F_denorm[2,2] 
         
-        return F_denorm
+        return F_norm
 
     C_est = []
     C = []
@@ -158,10 +161,11 @@ def ransac(puntos_clave_l, puntos_clave_d, iter, t):
 
     print("Empezamos RANSAC")
     for _ in range(iter):
-        if len(puntos_clave_d) > len(puntos_clave_l):
-            idx = random.sample(range(len(puntos_clave_l)), 8)
-        else:
-            idx = random.sample(range(len(puntos_clave_d)), 8)
+
+        N = min(len(puntos_clave_l), len(puntos_clave_d))
+        assert N >= 8, "No hay suficientes puntos para RANSAC"
+        idx = random.sample(range(N), 8)
+
         sample_l = puntos_clave_l[idx]
         sample_d = puntos_clave_d[idx]
 
@@ -182,8 +186,8 @@ def ransac(puntos_clave_l, puntos_clave_d, iter, t):
                 pd = tuple(map(float, puntos_clave_d[i]))
                 C.append((pl, pd))
 
-        # if len(C) > len(C_est) and best_error > error:
-        if len(C) > len(C_est):
+        if len(C) > len(C_est) and best_error > error:
+        #if len(C) > len(C_est):
             print("Mejor error hasta el momento:", error)
             best_error = error
             #C_est = np.array(C)
@@ -192,6 +196,7 @@ def ransac(puntos_clave_l, puntos_clave_d, iter, t):
             F_est = F
             if inliers > max_inliers:
                 max_inliers = inliers
+                print(f"max_inliers = {max_inliers}")
     #Filtrar luego para quedarse con las rectas con la orientación mas similar / común
     print("C_est =")
     print(C_est_np)
@@ -417,6 +422,27 @@ def visualizar_puntos(img_i, img_d, punto_i, punto_d):
     plt.tight_layout()
     plt.show()
 
+def normalizar_punto_y_fijo(p1, p2, K):
+    """
+    Normaliza dos puntos de imagen (en píxeles) a coordenadas de cámara
+    y fuerza que ambos tengan la misma coordenada Y (misma altura en el mundo).
+
+    Parámetros:
+    - p1_px, p2_px: puntos 2D en píxeles (x, y)
+    - K: matriz intrínseca de la cámara (3x3)
+
+    Retorna:
+    - y1_norm, y2_norm: puntos normalizados homogéneos (3D) con igual Y
+    """
+    # Normalizar con K
+    K_inv = np.linalg.inv(K)
+    y1 = K_inv @ p1
+    y2 = K_inv @ p2
+
+    # Forzar misma coordenada Y
+    y2[1] = y1[1]
+
+    return y1, y2
 
 def main():
     img_l = cv2.imread('im_i.jpg', cv2.IMREAD_COLOR)
@@ -455,7 +481,7 @@ def main():
             return f"\nK =\n{K}\nR =\n{R}\nt =\n{tras}"
 
         def caso_2():
-            return f"P reconstruida =\n{reconstruir_P(K, R, t)}\n P original = \n{P}"
+            return f"P reconstruida =\n{reconstruir_P(K, R, tras)}\n P original = \n{P}"
 
         def caso_3():
             nonlocal img_puntos_clave_d, img_puntos_clave_l, puntos_clave_l, puntos_clave_d
@@ -482,8 +508,20 @@ def main():
             return f"Plot de los matching realizado con matriz Fundamental (F)"
 
         def caso_7():
-            nonlocal E                     
+            nonlocal E
+            def normalizar_matriz_E(E):
+                """
+                Normaliza la matriz esencial E para asegurar que tenga rango 2.
+                """
+                U, S, Vt = np.linalg.svd(E)  # Descomposición SVD
+                S[2] = 0  # Forzar el tercer valor singular a cero
+                E_normalizada = U @ np.diag(S) @ Vt  # Reconstruir E con restricción de rango 2
+
+                return E_normalizada
+                                 
             E = calcular_matriz_E(F,K)
+            #E = normalizar_matriz_E(E)
+            E = E/E[2,2]
             return f"Matriz Esencial =\n {E}"
         
         def caso_8():
@@ -717,6 +755,10 @@ def main():
 
             visualizar_lineas_epipolares_listas(img_d, img_l, lineas_izq, lineas_der, puntos_izq, puntos_der)
             
+        def caso_15():
+            nonlocal K, puntos_l, puntos_d
+            pl, pd = encontrar_mejor_punto(puntos_l, puntos_d)
+            y1, y2 = normalizar_punto_y_fijo(pl[10], pd[10], K)
 
         switch = {
             "0": caso_0,
