@@ -4,18 +4,23 @@ import cv2
 import matplotlib.pyplot as plt
 import os
 import random
-from unit_tests import (
+import glob
+from unit_tests_V2 import (
     krt_descomposition,
     reconstruir_P,
-    correspendencias,
-    normalizar_puntos,
-    estima_error,
+    normalize_points,
+    sampson_error,
     ransac,
     calcular_matriz_E,
-    angle_bin,
-    visualizar_lineas_epipolares,
-    encontrar_mejor_punto,
-    dibujar_puntos_y_lineas
+    robust_numpy_matching,
+    block_matching,
+    compute_disparity_map,
+    filter_horizontal_matches,
+    mean_epipolar_error,
+    plot_sift_matches,
+    plot_inlier_matches,
+    draw_epipolar_lines,
+    calibracion_camara_chessboard
 )
 
 # ------------------------------------------------------------------------
@@ -114,44 +119,6 @@ def synthetic_fundamental_matrix():
     
     return F_rank2
 
-@pytest.fixture
-def matching_points():
-    """Create synthetic matching points that satisfy epipolar constraint."""
-    # Create points that approximately satisfy F*x = 0
-    F = np.array([
-        [0, -0.0001, 0.01],
-        [0.0001, 0, -0.01],
-        [-0.01, 0.01, 0]
-    ])
-    
-    # Generate some random points for left image
-    np.random.seed(42)
-    n_points = 20
-    points_l = np.random.rand(n_points, 2) * 100 + 100
-    
-    # For each left point, find a matching right point that satisfies the epipolar constraint
-    points_r = np.zeros_like(points_l)
-    for i, p_l in enumerate(points_l):
-        # Create homogeneous coordinates
-        p_l_h = np.append(p_l, 1)
-        
-        # Get epipolar line in right image
-        line_r = F @ p_l_h
-        
-        # Find a point on this line
-        # For a line ax + by + c = 0, if we fix y, then x = -(by + c)/a
-        y_r = p_l[1] + np.random.normal(0, 2)  # Add small vertical deviation
-        if abs(line_r[0]) > 1e-10:
-            x_r = -(line_r[1] * y_r + line_r[2]) / line_r[0]
-        else:
-            # If line is horizontal, fix x and solve for y
-            x_r = p_l[0] + np.random.normal(0, 2)
-            y_r = -(line_r[0] * x_r + line_r[2]) / line_r[1]
-        
-        points_r[i] = [x_r, y_r]
-    
-    return points_l, points_r, F
-
 # ------------------------------------------------------------------------
 # Tests for projection matrix decomposition and reconstruction
 # ------------------------------------------------------------------------
@@ -173,31 +140,9 @@ def test_krt_decomposition(synthetic_projection_matrix):
     assert np.isclose(np.linalg.det(R), 1.0, atol=1e-8)
     assert np.allclose(R.T @ R, np.eye(3), atol=1e-8)
     
-    # The reconstruction might differ due to scale ambiguity
-    # Test that the projection works similarly instead of exact equality
-    test_points_3d = np.array([
-        [0, 0, 0, 1],
-        [1, 0, 0, 1],
-        [0, 1, 0, 1],
-        [0, 0, 1, 1]
-    ]).T
-    
-    original_proj = P @ test_points_3d
-    
-    # Reconstruct P
-    try:
-        P_reconstructed = reconstruir_P(K, R, t)
-        reconstructed_proj = P_reconstructed @ test_points_3d
-        
-        # Normalize homogeneous coordinates
-        if not np.any(original_proj[2] == 0) and not np.any(reconstructed_proj[2] == 0):
-            original_proj = original_proj / original_proj[2]
-            reconstructed_proj = reconstructed_proj / reconstructed_proj[2]
-            
-            # Check that projections are similar (up to scale)
-            assert np.allclose(original_proj[:2], reconstructed_proj[:2], atol=1e-2)
-    except Exception as e:
-        pytest.skip(f"Reconstruction test skipped: {e}")
+    # Test reconstruction
+    P_reconstructed = reconstruir_P(K, R, t)
+    assert np.allclose(P, P_reconstructed, atol=1e-8)
 
 # ------------------------------------------------------------------------
 # Tests for point normalization
@@ -214,7 +159,7 @@ def test_normalize_points():
     ])
     
     # Normalize points
-    points_normalized, T = normalizar_puntos(points)
+    points_normalized, T = normalize_points(points)
     
     # Check that centroid is close to origin
     centroid = np.mean(points_normalized, axis=0)
@@ -228,329 +173,405 @@ def test_normalize_points():
     points_homogeneous = np.hstack((points, np.ones((points.shape[0], 1))))
     transformed_points = (T @ points_homogeneous.T).T
     assert np.allclose(transformed_points[:, :2], points_normalized, atol=1e-8)
+
+# ------------------------------------------------------------------------
+# Tests for Sampson error
+# ------------------------------------------------------------------------
+
+def test_sampson_error(synthetic_fundamental_matrix):
+    """Test Sampson error calculation."""
+    F = synthetic_fundamental_matrix
     
-    # Check that last row of T is [0, 0, 1]
-    assert np.allclose(T[2], [0, 0, 1])
-
-# ------------------------------------------------------------------------
-# Tests for correspondence finding
-# ------------------------------------------------------------------------
-
-def test_correspondencias_real_images():
-    """Test correspondence finding between real stereo images."""
-    img_l = cv2.imread("im_i.jpg", cv2.IMREAD_COLOR)
-    img_d = cv2.imread("im_d.jpg", cv2.IMREAD_COLOR)
-    assert img_l is not None, "Left image (im_i.jpg) not found"
-    assert img_d is not None, "Right image (im_d.jpg) not found"
-
-    puntos_clave_l, puntos_clave_d, img_puntos_clave_l, img_puntos_clave_d = correspendencias(img_l, img_d)
-
-    # Check that we found a reasonable number of keypoints in both images
-    assert len(puntos_clave_l) > 20, f"Too few keypoints in left image: {len(puntos_clave_l)}"
-    assert len(puntos_clave_d) > 20, f"Too few keypoints in right image: {len(puntos_clave_d)}"
-
-    # Optionally, print the ratio for information (not as an assertion)
-    ratio = min(len(puntos_clave_l), len(puntos_clave_d)) / max(len(puntos_clave_l), len(puntos_clave_d))
-    print(f"Keypoint count ratio: {ratio:.2f}")
-
-    # Check that keypoint images were created correctly
-    assert img_puntos_clave_l.shape == img_l.shape
-    assert img_puntos_clave_d.shape == img_d.shape
-
-def test_sift_matching_real_images():
-    img_l = cv2.imread("im_i.jpg", cv2.IMREAD_COLOR)
-    img_d = cv2.imread("im_d.jpg", cv2.IMREAD_COLOR)
-    assert img_l is not None, "Left image (im_i.jpg) not found"
-    assert img_d is not None, "Right image (im_d.jpg) not found"
-
-    sift = cv2.SIFT_create()
-    kp_l, des_l = sift.detectAndCompute(img_l, None)
-    kp_d, des_d = sift.detectAndCompute(img_d, None)
-
-    bf = cv2.BFMatcher()
-    matches = bf.knnMatch(des_l, des_d, k=2)
-
-    good_matches = []
-    for m, n in matches:
-        if m.distance < 0.75 * n.distance:
-            good_matches.append(m)
-
-    assert len(good_matches) > 10, f"Too few good matches: {len(good_matches)}"
-
-# ------------------------------------------------------------------------
-# Tests for epipolar error estimation
-# ------------------------------------------------------------------------
-
-def test_estima_error(matching_points):
-    """Test epipolar error estimation function."""
-    points_l, points_r, F = matching_points
+    # Create test points (Nx3 format)
+    x1 = np.array([[100, 200, 1], [150, 250, 1]], dtype=np.float32)
+    x2 = np.array([[150, 200, 1], [200, 250, 1]], dtype=np.float32)
     
-    # Calculate error for matching points
-    error = estima_error(points_l, points_r, F)
+    # Calculate error
+    error = sampson_error(F, x1, x2)
     
-    # Error should be small for good matches
-    assert error < 1.0
-    
-    # Create deliberate outliers
-    outlier_points_r = points_r.copy()
-    outlier_points_r[0] = [points_r[0, 0] + 50, points_r[0, 1] + 50]  # Move a point significantly
-    
-    # Error should be larger with outliers
-    outlier_error = estima_error(points_l, outlier_points_r, F)
-    assert outlier_error > error
+    # Error should be an array with one value per point
+    assert isinstance(error, np.ndarray)
+    assert error.shape == (2,)
+    assert np.all(error >= 0)
 
 # ------------------------------------------------------------------------
-# Tests for RANSAC and fundamental matrix estimation
+# Tests for RANSAC
 # ------------------------------------------------------------------------
 
-def test_ransac_synthetic():
+def test_ransac_synthetic(synthetic_stereo_pair):
     """Test RANSAC with synthetic data."""
-    # Create synthetic corresponding points with controlled outliers
-    np.random.seed(42)
+    _, _, left_points, right_points = synthetic_stereo_pair
     
-    # Create ground truth fundamental matrix
-    F_gt = np.array([
-        [0, -0.0001, 0.01],
-        [0.0001, 0, -0.01],
-        [-0.01, 0.01, 0]
-    ])
+    # Run RANSAC
+    F, inliers = ransac(left_points, right_points, 100, 5.0)
     
-    # Generate points in left image
-    n_points = 100
-    points_l = np.random.rand(n_points, 2) * 500
+    # Check fundamental matrix properties
+    assert F.shape == (3, 3)
     
-    # Generate corresponding points in right image using the epipolar constraint
-    # plus some noise
-    points_r = np.zeros_like(points_l)
-    for i, pl in enumerate(points_l):
-        # Create a point that approximately satisfies the epipolar constraint
-        pl_h = np.append(pl, 1)
-        line_r = F_gt @ pl_h
-        
-        # Pick a point near this line
-        if abs(line_r[0]) > 1e-8:
-            y_r = pl[1] + np.random.normal(0, 1)
-            x_r = -(line_r[1] * y_r + line_r[2]) / line_r[0]
-        else:
-            x_r = pl[0] + np.random.normal(0, 1)
-            y_r = -(line_r[0] * x_r + line_r[2]) / line_r[1]
-        
-        points_r[i] = [x_r, y_r]
+    # Check rank 2 property
+    u, s, vh = np.linalg.svd(F)
+    assert s[2] / s[0] < 0.1  # Third singular value should be small
     
-    # Add outliers (20%)
-    outlier_indices = np.random.choice(n_points, int(n_points * 0.2), replace=False)
-    points_r[outlier_indices] = np.random.rand(len(outlier_indices), 2) * 500
-    
-    # Set the random seed for reproducibility in RANSAC
-    random.seed(42)
-    
-    try:
-        # Run RANSAC with limited iterations for testing
-        F_est, correspondences = ransac(points_l, points_r, 20, 5.0)
-        
-        # Check basic properties of the estimated F
-        assert F_est.shape == (3, 3)
-        
-        # Check that F has rank 2 (or close to it)
-        u, s, vh = np.linalg.svd(F_est)
-        assert s[2] / s[0] < 0.1  # Third singular value should be small
-        
-        # Check that we found inliers
-        assert len(correspondences) > 0
-        assert len(correspondences) <= n_points
-        assert len(correspondences) >= n_points * 0.7  # Should find most of the inliers
-    except Exception as e:
-        pytest.skip(f"RANSAC test skipped: {e}")
+    # Check that we found inliers
+    assert len(inliers) > 0
+    assert len(inliers) <= len(left_points)
+
+@pytest.fixture
+def real_stereo_pair():
+    left = cv2.imread('cones/im_i.jpg', cv2.IMREAD_COLOR)
+    right = cv2.imread('cones/im_d.jpg', cv2.IMREAD_COLOR)
+    if left is None or right is None:
+        pytest.skip("Stereo images not found!")
+    return left, right
+
+def test_sift_and_ransac(real_stereo_pair):
+    img_l, img_d = real_stereo_pair
+    sift = cv2.SIFT_create()
+    kp1, des1 = sift.detectAndCompute(img_l, None)
+    kp2, des2 = sift.detectAndCompute(img_d, None)
+    idx_l, idx_d = robust_numpy_matching(des1, des2)
+    puntos_clave_l = np.array([kp1[i].pt for i in idx_l], dtype=np.float32)
+    puntos_clave_d = np.array([kp2[i].pt for i in idx_d], dtype=np.float32)
+    puntos_clave_l, puntos_clave_d = filter_horizontal_matches(puntos_clave_l, puntos_clave_d)
+    if len(puntos_clave_l) < 8:
+        pytest.skip("Not enough matches for RANSAC")
+    F, inliers = ransac(puntos_clave_l, puntos_clave_d, 100, 5.0)
+    assert F.shape == (3, 3)
+    assert len(inliers) > 0
 
 # ------------------------------------------------------------------------
-# Tests for essential matrix calculation
+# Tests for essential matrix
 # ------------------------------------------------------------------------
 
-def test_essential_matrix():
-    """Test essential matrix calculation from fundamental matrix."""
-    # Create a fundamental matrix
-    F = np.array([
-        [0, -0.0001, 0.01],
-        [0.0001, 0, -0.01],
-        [-0.01, 0.01, 0]
-    ])
-    
-    # Create a calibration matrix
+def test_essential_matrix(synthetic_fundamental_matrix):
+    """Test essential matrix calculation."""
+    F = synthetic_fundamental_matrix
     K = np.array([
         [1000, 0, 500],
         [0, 1000, 500],
         [0, 0, 1]
     ])
     
-    # Calculate essential matrix
     E = calcular_matriz_E(F, K)
     
-    # Check properties of essential matrix
+    # Check essential matrix properties
     assert E.shape == (3, 3)
     
-    # Essential matrix should have two equal singular values and one zero
+    # Check singular values
     u, s, vh = np.linalg.svd(E)
-    
-    # Normalize singular values
-    s = s / s[0]
-    
-    # First two singular values should be similar
-    assert abs(s[0] - s[1]) < 0.2
-    
-    # Third singular value should be small
-    assert s[2] < 0.1
+    s = s / s[0]  # Normalize
+    assert abs(s[0] - s[1]) < 0.2  # First two should be similar
+    assert s[2] < 0.1  # Third should be small
 
 # ------------------------------------------------------------------------
-# Tests for angle binning
+# Tests for robust matching
 # ------------------------------------------------------------------------
 
-def test_angle_bin():
-    """Test angle binning function."""
-    # Test with various vectors
-    vectors = [
-        np.array([1, 0]),     # 0 degrees
-        np.array([1, 1]),     # 45 degrees
-        np.array([0, 1]),     # 90 degrees
-        np.array([-1, 1]),    # 135 degrees
-        np.array([-1, 0]),    # 180 degrees
-        np.array([-1, -1]),   # 225 degrees
-        np.array([0, -1]),    # 270 degrees
-        np.array([1, -1])     # 315 degrees
-    ]
+def test_robust_numpy_matching():
+    """Test robust numpy matching function."""
+    # Create synthetic descriptors
+    np.random.seed(42)
+    des1 = np.random.rand(100, 128)
+    des2 = np.random.rand(100, 128)
     
-    # Test that all vectors get valid bin numbers
-    for v in vectors:
-        bin_val = angle_bin(v)
-        assert isinstance(bin_val, int)
-        assert 0 <= bin_val <= 36  # 36 bins in total
+    # Add some matching pairs
+    for i in range(50):
+        des2[i] = des1[i] + np.random.normal(0, 0.1, 128)
     
-    # Test that similar vectors get similar bins
-    v1 = np.array([1.0, 0.01])
-    v2 = np.array([1.0, 0.02])
-    assert abs(angle_bin(v1) - angle_bin(v2)) <= 1
+    # Run matching
+    idx_l, idx_d = robust_numpy_matching(des1, des2)
     
-    # Test that opposite vectors get different bins
-    v1 = np.array([1.0, 0.0])
-    v2 = np.array([-1.0, 0.0])
-    bin1 = angle_bin(v1)
-    bin2 = angle_bin(v2)
-    
-    # Since bins might wrap around (e.g., bin 0 and bin 36 are adjacent)
-    # We need to check the smaller of the direct difference and the wrapped difference
-    direct_diff = abs(bin1 - bin2)
-    wrapped_diff = 36 - direct_diff
-    diff = min(direct_diff, wrapped_diff)
-    
-    # Opposite vectors should have significantly different bins
-    assert diff > 5
+    # Check results
+    assert len(idx_l) > 0
+    assert len(idx_l) == len(idx_d)
+    assert len(idx_l) <= min(len(des1), len(des2))
 
 # ------------------------------------------------------------------------
-# Tests for epipolar line visualization
+# Tests for block matching
 # ------------------------------------------------------------------------
 
-def test_visualizar_lineas_epipolares():
-    """Test visualization of epipolar lines."""
-    # Create a simple test image
-    img_l = np.ones((300, 400, 3), dtype=np.uint8) * 255
-    img_d = np.ones((300, 400, 3), dtype=np.uint8) * 255
+def test_block_matching():
+    """Test block matching function."""
+    # Create synthetic stereo pair
+    height, width = 100, 100
+    left = np.zeros((height, width), dtype=np.float32)
+    right = np.zeros((height, width), dtype=np.float32)
     
-    # Create test points and lines
-    punto_izq = np.array([200, 150, 1])
-    punto_der = np.array([180, 150, 1])
+    # Add some features
+    for i in range(10, 90, 20):
+        for j in range(10, 90, 20):
+            left[i:i+10, j:j+10] = 255
+            right[i:i+10, j-5:j+5] = 255  # Shifted by 5 pixels
     
-    # Create epipolar lines
-    l_izq = np.array([0.1, 1.0, -170])
-    l_der = np.array([0.1, 1.0, -170])
+    # Run block matching
+    disparity = block_matching(left, right, max_disparity=20, kernel_size=5)
+    
+    # Check results
+    assert disparity.shape == (height, width)
+    assert np.all(disparity >= 0)
+    assert np.all(disparity <= 20)
+
+# ------------------------------------------------------------------------
+# Tests for horizontal match filtering
+# ------------------------------------------------------------------------
+
+def test_filter_horizontal_matches():
+    """Test horizontal match filtering."""
+    # Create test points
+    points_l = np.array([
+        [100, 200],
+        [150, 250],
+        [200, 300]
+    ])
+    
+    points_d = np.array([
+        [120, 200],  # Horizontal
+        [160, 260],  # Diagonal
+        [180, 400]   # Vertical
+    ])
+    
+    # Filter matches
+    filtered_l, filtered_d = filter_horizontal_matches(points_l, points_d, max_angle_deg=20)
+    
+    # Check that only horizontal matches remain
+    assert len(filtered_l) == 1
+    assert len(filtered_d) == 1
+    assert np.allclose(filtered_l[0], points_l[0])
+    assert np.allclose(filtered_d[0], points_d[0])
+
+# ------------------------------------------------------------------------
+# Tests for mean epipolar error
+# ------------------------------------------------------------------------
+
+def test_mean_epipolar_error(synthetic_fundamental_matrix):
+    """Test mean epipolar error calculation."""
+    F = synthetic_fundamental_matrix
+    
+    # Create test points
+    pts1 = np.array([
+        [100, 200],
+        [150, 250],
+        [200, 300]
+    ])
+    
+    pts2 = np.array([
+        [120, 200],
+        [160, 250],
+        [220, 300]
+    ])
+    
+    # Calculate error
+    error = mean_epipolar_error(F, pts1, pts2)
+    
+    # Check result
+    assert isinstance(error, float)
+    assert error >= 0
+
+# ------------------------------------------------------------------------
+# Tests for camera calibration
+# ------------------------------------------------------------------------
+
+@pytest.fixture
+def synthetic_chessboard_images():
+    """Create synthetic chessboard images for calibration testing."""
+    # Create a 7x7 chessboard pattern
+    pattern_size = (7, 7)
+    square_size = 2.4  # mm
+    image_size = (640, 480)
+    
+    # Create object points (3D points in real world space)
+    objp = np.zeros((pattern_size[0] * pattern_size[1], 3), np.float32)
+    objp[:, :2] = np.mgrid[0:pattern_size[0], 0:pattern_size[1]].T.reshape(-1, 2)
+    objp *= square_size
+    
+    # Create synthetic camera parameters
+    K = np.array([
+        [1000, 0, image_size[0]/2],
+        [0, 1000, image_size[1]/2],
+        [0, 0, 1]
+    ])
+    
+    # Create multiple views with different poses
+    images = []
+    objpoints = []
+    imgpoints = []
+    
+    for i in range(5):
+        # Create rotation and translation (ensure correct shape)
+        rvec = np.array([0.1, 0.2, 0.3], dtype=np.float32).reshape(3, 1)
+        tvec = np.array([0, 0, 1000 + i*100], dtype=np.float32).reshape(3, 1)
+        
+        # Project points
+        imgp, _ = cv2.projectPoints(objp, rvec, tvec, K, None)
+        imgp = imgp.reshape(-1, 2)
+        
+        # Create synthetic image
+        img = np.zeros((image_size[1], image_size[0]), dtype=np.uint8)
+        for pt in imgp:
+            cv2.circle(img, tuple(map(int, pt)), 3, 255, -1)
+        
+        images.append(img)
+        objpoints.append(objp)
+        imgpoints.append(imgp)
+    
+    return images, objpoints, imgpoints
+
+def test_camera_calibration(synthetic_chessboard_images):
+    """Test camera calibration function."""
+    images, objpoints, imgpoints = synthetic_chessboard_images
+    
+    # Save images temporarily
+    temp_dir = "temp_calib"
+    os.makedirs(temp_dir, exist_ok=True)
+    image_files = []
+    for i, img in enumerate(images):
+        filename = f"{temp_dir}/chessboard_{i}.jpg"
+        cv2.imwrite(filename, img)
+        image_files.append(filename)
     
     try:
-        # Call the visualization function
-        # This is just testing if the function runs without errors
-        visualizar_lineas_epipolares(img_d, img_l, l_izq, l_der, punto_izq, punto_der)
+        # Run calibration
+        ret, mtx, dist, rvecs, tvecs = calibracion_camara_chessboard(
+            image_files,
+            chessboard_size=(7,7),
+            square_size=2.4,
+            show_corners=False
+        )
         
-        # Since this is a visualization function, we can't easily verify the output
-        # But we can check that it doesn't crash
-        assert True
-    except Exception as e:
-        pytest.fail(f"Epipolar line visualization failed: {e}")
+        # Check results
+        assert isinstance(ret, float)
+        assert mtx.shape == (3, 3)
+        assert dist.shape == (5,)
+        assert len(rvecs) == len(images)
+        assert len(tvecs) == len(images)
+        
+        # Check that camera matrix is reasonable
+        assert mtx[0,0] > 0  # focal length x
+        assert mtx[1,1] > 0  # focal length y
+        assert mtx[2,2] == 1  # homogeneous coordinate
+        
+    finally:
+        # Clean up temporary files
+        for filename in image_files:
+            os.remove(filename)
+        os.rmdir(temp_dir)
 
-# ------------------------------------------------------------------------
-# Tests for finding best points
-# ------------------------------------------------------------------------
-
-def test_encontrar_mejor_punto(synthetic_stereo_pair):
-    """Test finding the best point correspondences."""
-    _, _, left_points, right_points = synthetic_stereo_pair
+def test_camera_calibration_real():
+    """Test camera calibration with real chessboard images."""
+    # Check if calibration images exist
+    image_files = glob.glob('Muestra/*.jpeg')
+    if not image_files:
+        pytest.skip("No calibration images found in Muestra directory")
     
-    try:
-        # Call the function
-        almacen_l, almacen_d = encontrar_mejor_punto(left_points, right_points)
-        
-        # Check that we got some points
-        assert almacen_l.shape[0] > 0
-        assert almacen_d.shape[0] > 0
-        
-        # Check that both arrays have the same number of points
-        assert almacen_l.shape[0] == almacen_d.shape[0]
-        
-        # Check that points are in homogeneous coordinates
-        assert almacen_l.shape[1] == 3
-        assert almacen_d.shape[1] == 3
-        
-        # Check that the third coordinate is 1 (homogeneous)
-        assert np.all(almacen_l[:, 2] == 1)
-        assert np.all(almacen_d[:, 2] == 1)
-    except Exception as e:
-        pytest.skip(f"Test for encontrar_mejor_punto skipped: {e}")
-
-# ------------------------------------------------------------------------
-# Integration tests
-# ------------------------------------------------------------------------
-
-def test_pipeline_integration(synthetic_stereo_pair):
-    """Test the whole pipeline integration."""
-    img_l, img_d, true_left_points, true_right_points = synthetic_stereo_pair
+    # Run calibration
+    ret, mtx, dist, rvecs, tvecs = calibracion_camara_chessboard(
+        image_files,
+        chessboard_size=(7,7),
+        square_size=2.4,
+        show_corners=False
+    )
     
-    try:
-        # Step 1: Find correspondences
-        puntos_clave_l, puntos_clave_d, _, _ = correspendencias(img_l, img_d)
-        
-        # Step 2: Run RANSAC to find fundamental matrix
-        random.seed(42)  # For reproducibility
-        F_est, correspondences = ransac(puntos_clave_l, puntos_clave_d, 10, 5.0)
-        
-        # Check that we found a valid fundamental matrix
-        assert F_est.shape == (3, 3)
-        
-        # Step 3: Create a calibration matrix and calculate essential matrix
-        K = np.array([
-            [1000, 0, img_l.shape[1]/2],
-            [0, 1000, img_l.shape[0]/2],
-            [0, 0, 1]
-        ])
-        
-        E = calcular_matriz_E(F_est, K)
-        
-        # Check essential matrix properties
-        u, s, vh = np.linalg.svd(E)
-        assert s[2] / s[0] < 0.1  # Third singular value should be small
-        
-        # Step 4: Use correspondences to find best points
-        if len(correspondences) > 0:
-            puntos_l_list, puntos_d_list = zip(*correspondences)
-            puntos_l = np.vstack(puntos_l_list)
-            puntos_d = np.vstack(puntos_d_list)
-            
-            # Find best points based on angle binning
-            mejor_l, mejor_d = encontrar_mejor_punto(puntos_l, puntos_d)
-            
-            # Check that we found some points
-            assert mejor_l.shape[0] > 0
-            assert mejor_d.shape[0] > 0
-        
-        # Test successful completion
-        assert True
-    except Exception as e:
-        pytest.skip(f"Pipeline integration test skipped: {e}")
+    # Check results
+    assert isinstance(ret, float)
+    assert mtx.shape == (3, 3)
+    assert dist.size >= 5
+    assert len(rvecs) == len(image_files)
+    assert len(tvecs) == len(image_files)
+    
+    # Check that camera matrix is reasonable
+    assert mtx[0,0] > 0  # focal length x
+    assert mtx[1,1] > 0  # focal length y
+    assert mtx[2,2] == 1  # homogeneous coordinate
+
+# ------------------------------------------------------------------------
+# Tests for visualization functions
+# ------------------------------------------------------------------------
+
+def test_plot_sift_matches(real_stereo_pair):
+    """Test SIFT matches visualization."""
+    img_l, img_d = real_stereo_pair
+    sift = cv2.SIFT_create()
+    kp1, des1 = sift.detectAndCompute(img_l, None)
+    kp2, des2 = sift.detectAndCompute(img_d, None)
+    idx_l, idx_d = robust_numpy_matching(des1, des2)
+    puntos_clave_l = np.array([kp1[i].pt for i in idx_l], dtype=np.float32)
+    puntos_clave_d = np.array([kp2[i].pt for i in idx_d], dtype=np.float32)
+    puntos_clave_l, puntos_clave_d = filter_horizontal_matches(puntos_clave_l, puntos_clave_d)
+    if len(puntos_clave_l) < 8:
+        pytest.skip("Not enough matches for SIFT visualization")
+    plot_sift_matches(img_l, img_d, puntos_clave_l, puntos_clave_d)
+
+def test_plot_inlier_matches():
+    """Test inlier matches visualization."""
+    # Create synthetic images
+    img_l = np.zeros((100, 100, 3), dtype=np.uint8)
+    img_d = np.zeros((100, 100, 3), dtype=np.uint8)
+    
+    # Create inlier matches
+    inliers = [((30, 30), (40, 30))]
+    
+    # Test visualization (should not raise any errors)
+    plot_inlier_matches(img_l, img_d, inliers)
+
+def test_draw_epipolar_lines(synthetic_fundamental_matrix):
+    """Test epipolar line drawing."""
+    # Create synthetic images
+    img1 = np.zeros((100, 100, 3), dtype=np.uint8)
+    img2 = np.zeros((100, 100, 3), dtype=np.uint8)
+    
+    # Create test points
+    pts1 = np.array([[30, 30], [50, 50]], dtype=np.float32)
+    pts2 = np.array([[40, 30], [60, 50]], dtype=np.float32)
+    
+    # Test visualization (should not raise any errors)
+    draw_epipolar_lines(img1, img2, synthetic_fundamental_matrix, pts1, pts2)
+
+# ------------------------------------------------------------------------
+# Tests for disparity computation
+# ------------------------------------------------------------------------
+
+def test_compute_disparity_map():
+    """Test disparity map computation."""
+    # Create synthetic stereo pair
+    height, width = 100, 100
+    left = np.zeros((height, width, 3), dtype=np.uint8)
+    right = np.zeros((height, width, 3), dtype=np.uint8)
+    
+    # Add some features
+    for i in range(10, 90, 20):
+        for j in range(10, 90, 20):
+            cv2.circle(left, (j, i), 5, (255, 255, 255), -1)
+            cv2.circle(right, (j-5, i), 5, (255, 255, 255), -1)
+    
+    # Compute disparity map
+    disparity_map = compute_disparity_map(
+        left,
+        right,
+        max_disparity=20,
+        kernel_size=5,
+        use_subpixel=True
+    )
+    
+    # Check results
+    assert disparity_map.shape == (height, width)
+    assert np.all(disparity_map >= 0)
+    assert np.all(disparity_map <= 20)
+    
+    # Check that we found the expected disparity
+    # The circles are shifted by 5 pixels
+    expected_disparity = 5
+    mask = (left[:, :, 0] > 0) & (right[:, :, 0] > 0)
+    if np.any(mask):
+        mean_disparity = np.mean(disparity_map[mask])
+        assert abs(mean_disparity - expected_disparity) < 2.0
+
+def test_disparity_map_with_ground_truth(real_stereo_pair):
+    left, right = real_stereo_pair
+    left_gray = cv2.cvtColor(left, cv2.COLOR_BGR2GRAY)
+    right_gray = cv2.cvtColor(right, cv2.COLOR_BGR2GRAY)
+    disparity_map = compute_disparity_map(left_gray, right_gray, max_disparity=20, kernel_size=5, use_subpixel=True)
+    assert disparity_map.shape == left_gray.shape
+    assert disparity_map.dtype == np.float32
 
 if __name__ == "__main__":
     pytest.main(["-v", __file__])

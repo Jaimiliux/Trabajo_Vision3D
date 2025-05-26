@@ -24,20 +24,19 @@ def calibracion_camara_chessboard(image_files, chessboard_size=(7,7), square_siz
         rvecs: Rotation vectors.
         tvecs: Translation vectors.
     """
+    # Prepare object points (0,0,0), (1,0,0), ..., (8,5,0) if chessboard_size=(9,6)
     objp = np.zeros((chessboard_size[1]*chessboard_size[0], 3), np.float32)
     objp[:,:2] = np.mgrid[0:chessboard_size[0], 0:chessboard_size[1]].T.reshape(-1,2)
     objp *= square_size
 
-    objpoints = []
-    imgpoints = []
-    img_shape = None
+    objpoints = []  # 3d points in real world space
+    imgpoints = []  # 2d points in image plane
 
     for fname in image_files:
         img = cv2.imread(fname)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        if img_shape is None:
-            img_shape = gray.shape[::-1]
         ret, corners = cv2.findChessboardCorners(gray, chessboard_size, None)
+
         if ret:
             objpoints.append(objp)
             corners2 = cv2.cornerSubPix(gray, corners, (11,11), (-1,-1),
@@ -53,11 +52,9 @@ def calibracion_camara_chessboard(image_files, chessboard_size=(7,7), square_siz
     if show_corners:
         cv2.destroyAllWindows()
 
-    if not objpoints or not imgpoints:
-        raise RuntimeError("No chessboard corners were detected in any image. Check your images and chessboard size.")
-
+    # Calibrate camera
     ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(
-        objpoints, imgpoints, img_shape, None, None
+        objpoints, imgpoints, gray.shape[::-1], None, None
     )
     print("RMS re-projection error:", ret)
     print("Camera matrix:\n", mtx)
@@ -203,8 +200,7 @@ def ransac(puntos_clave_l, puntos_clave_d, iter, t):
         F_vec = z
         F = np.reshape(F_vec, (3, 3)) 
         #Normalizamos F
-        if np.abs(F[2,2]) > 1e-8:
-            F = F / F[2,2]
+        F = F / F[2,2]
 
         Uf, Sf, Vtf = np.linalg.svd(F) #!!!Normalizar valores singulares
         #tan_v = Sf[1]/Sf[0]
@@ -217,17 +213,9 @@ def ransac(puntos_clave_l, puntos_clave_d, iter, t):
         Sf[-1] = 0  # anular el menor valor singular
         F_rank2 = Uf @ np.diagflat(Sf) @ Vtf
         F_denorm = T2.T @ F_rank2 @ T1    
-        if np.abs(F_denorm[2,2]) > 1e-8:
-            F_norm = F_denorm/F_denorm[2,2] 
-        else:
-            F_norm = F_denorm
+        F_norm = F_denorm/F_denorm[2,2] 
         
         return F_norm
-
-    # Check input validity
-    if len(puntos_clave_l) < 8 or len(puntos_clave_d) < 8:
-        print(f"ERROR: Not enough points for RANSAC. Need at least 8, got {len(puntos_clave_l)} and {len(puntos_clave_d)}")
-        return None, []
 
     C_est = []
     C = []
@@ -238,10 +226,7 @@ def ransac(puntos_clave_l, puntos_clave_d, iter, t):
     puntos_normalizados_d, T2 = normalize_points(puntos_clave_d)
 
     print("Empezamos RANSAC")
-    print(f"Input points: {len(puntos_clave_l)} matches")
-    print(f"RANSAC iterations: {iter}, threshold: {t}")
-    
-    for iteration in range(iter):
+    for _ in range(iter):
 
         N = min(len(puntos_clave_l), len(puntos_clave_d))
         assert N >= 8, "No hay suficientes puntos para RANSAC"
@@ -253,12 +238,7 @@ def ransac(puntos_clave_l, puntos_clave_d, iter, t):
         sample_l, T_1 = normalize_points(sample_l)
         sample_d, T_2 = normalize_points(sample_d)
 
-        try:
-            F = eight_point_algorithm(sample_l, sample_d, T_1, T_2) #poner aqui dentro la normalizacion de puntos
-        except Exception as e:
-            print(f"Error in eight_point_algorithm at iteration {iteration}: {e}")
-            continue
-            
+        F = eight_point_algorithm(sample_l, sample_d, T_1, T_2) #poner aqui dentro la normalizacion de puntos
         inliers = 0
         C = []
         
@@ -267,38 +247,43 @@ def ransac(puntos_clave_l, puntos_clave_d, iter, t):
             pl_n_h = np.append(pl_n, 1)
             pd_n_h = np.append(pd_n, 1)
             # El error de Sampson espera arrays de Nx3
-            try:
-                error = sampson_error(F, np.array([pl_n_h]), np.array([pd_n_h]))[0]
-                if error < t:
-                    inliers += 1
-                    pl = tuple(map(float, puntos_clave_l[i]))
-                    pd = tuple(map(float, puntos_clave_d[i]))
-                    C.append((pl, pd))
-            except Exception as e:
-                continue
+            error = sampson_error(F, np.array([pl_n_h]), np.array([pd_n_h]))[0]
+            if error < t:
+                inliers += 1
+                pl = tuple(map(float, puntos_clave_l[i]))
+                pd = tuple(map(float, puntos_clave_d[i]))
+                C.append((pl, pd))
 
-        if len(C) > len(C_est):
-            print(f"Iteration {iteration}: Found {len(C)} inliers (previous best: {len(C_est)})")
+        if len(C) > len(C_est) and best_error > error:
+        #if len(C) > len(C_est):
+            print("Mejor error hasta el momento:", error)
+            best_error = error
+            #C_est = np.array(C)
+            #C_est_np = (np.array(C_est, dtype=object)).copy()
             C_est_np = (np.array(C)).copy()
             F_est = F
             if inliers > max_inliers:
                 max_inliers = inliers
-                print(f"New max_inliers = {max_inliers}")
-                
+                print(f"max_inliers = {max_inliers}")
     print(f"Total inliers found: {max_inliers} (threshold t={t})")
+    #Filtrar luego para quedarse con las rectas con la orientación mas similar / común
+    print("C_est =")
+    print(C_est_np)
+    print("F_est =")
+    print(F_est)
     print("Terminamos RANSAC")
-    
     if len(C_est_np) >= 8:
-        print("Refining fundamental matrix with all inliers...")
         puntos_l_inliers = np.array([p[0] for p in C_est_np])
         puntos_d_inliers = np.array([p[1] for p in C_est_np])
         puntos_l_norm, T1 = normalize_points(puntos_l_inliers)
         puntos_d_norm, T2 = normalize_points(puntos_d_inliers)
         F_final = eight_point_algorithm(puntos_l_norm, puntos_d_norm, T1, T2)
+        puntos_l_list, puntos_d_list = zip(*C_est_np)
+        puntos_l = np.vstack(puntos_l_list)
+        puntos_d = np.vstack(puntos_d_list)
         return F_final, C_est_np
     else:
-        print("WARNING: Not enough inliers found for reliable fundamental matrix estimation")
-        return F_est if 'F_est' in locals() else None, C_est_np if 'C_est_np' in locals() else []
+        return F_est, C_est_np
 
 def calcular_matriz_E(F,K):
     K_np = np.array(K)
@@ -413,7 +398,7 @@ def visualizar_epipolar_validation(img_l, img_d, F, puntos_l, puntos_d, E=None, 
     plt.tight_layout()
     plt.show()
 
-def robust_numpy_matching(des1, des2, ratio_thresh=0.85):
+def robust_numpy_matching(des1, des2, ratio_thresh=0.75):
     """
     Robust SIFT matching using only NumPy:
     - Lowe's ratio test
@@ -421,9 +406,6 @@ def robust_numpy_matching(des1, des2, ratio_thresh=0.85):
     - Remove duplicates
     Returns: idx_l, idx_d (indices of matched keypoints in img_l and img_d)
     """
-    print(f"Number of keypoints in left image: {len(des1)}")
-    print(f"Number of keypoints in right image: {len(des2)}")
-    
     # Forward matching: des1 -> des2
     matches_l = []
     matches_d = []
@@ -436,8 +418,6 @@ def robust_numpy_matching(des1, des2, ratio_thresh=0.85):
         if best < ratio_thresh * second_best:
             matches_l.append(i)
             matches_d.append(idx[0])
-
-    print(f"Forward matches found: {len(matches_l)}")
 
     # Backward matching: des2 -> des1
     matches_l2 = []
@@ -452,14 +432,10 @@ def robust_numpy_matching(des1, des2, ratio_thresh=0.85):
             matches_l2.append(idx[0])
             matches_d2.append(j)
 
-    print(f"Backward matches found: {len(matches_l2)}")
-
     # Cross-check: keep only mutual matches
     set_forward = set(zip(matches_l, matches_d))
     set_backward = set(zip(matches_l2, matches_d2))
     mutual_matches = list(set_forward & set_backward)
-
-    print(f"Mutual matches found: {len(mutual_matches)}")
 
     # Remove duplicates (keep only one match per keypoint in img_l)
     seen_l = set()
@@ -468,8 +444,6 @@ def robust_numpy_matching(des1, des2, ratio_thresh=0.85):
         if l not in seen_l:
             filtered_matches.append((l, d))
             seen_l.add(l)
-
-    print(f"Final filtered matches: {len(filtered_matches)}")
 
     idx_l = np.array([l for l, d in filtered_matches])
     idx_d = np.array([d for l, d in filtered_matches])
@@ -732,22 +706,17 @@ def visualize_disparity(disparity_map, title="Disparity Map"):
     plt.axis('off')
     plt.show()
 
-def filter_horizontal_matches(puntos_l, puntos_d, max_angle_deg=30):
+def filter_horizontal_matches(puntos_l, puntos_d, max_angle_deg=20):
     """
     Keep only matches where the correspondence vector is close to horizontal.
     max_angle_deg: maximum allowed angle (in degrees) from the x-axis.
     Returns filtered puntos_l, puntos_d.
     """
-    print(f"Number of matches before horizontal filtering: {len(puntos_l)}")
     vectors = puntos_d - puntos_l
     angles = np.arctan2(vectors[:, 1], vectors[:, 0])  # in radians
     angles_deg = np.degrees(np.abs(angles))
     mask = angles_deg < max_angle_deg
-    filtered_l = puntos_l[mask]
-    filtered_d = puntos_d[mask]
-    print(f"Number of matches after horizontal filtering: {len(filtered_l)}")
-    print(f"Angle threshold: {max_angle_deg} degrees")
-    return filtered_l, filtered_d
+    return puntos_l[mask], puntos_d[mask]
 
 def plot_rectified_points(img_l, img_d, puntos_clave_l, puntos_clave_d, HL, HD):
     """
@@ -1036,55 +1005,9 @@ def compute_average_pose(rvecs, tvecs):
 
 def main():
     global RANSAC_THRESHOLD
-    img_l = cv2.imread('im_i.jpg', cv2.IMREAD_COLOR)
-    img_d = cv2.imread('im_d.jpg', cv2.IMREAD_COLOR)
+    img_l = cv2.imread('cones/disp6.png', cv2.IMREAD_COLOR)
+    img_d = cv2.imread('cones/disp2.png', cv2.IMREAD_COLOR)
     flag = True
-
-    # Check if images loaded correctly
-    if img_l is None or img_d is None:
-        print("ERROR: Could not load images 'im_i.jpg' and/or 'im_d.jpg'")
-        print("Make sure these files exist in the current directory.")
-        return
-
-    print("Images loaded successfully!")
-    print(f"Left image shape: {img_l.shape}")
-    print(f"Right image shape: {img_d.shape}")
-
-    def show_menu():
-        print("\n" + "="*60)
-        print("COMPUTER VISION 3D - STEREO VISION PIPELINE")
-        print("="*60)
-        print("BASIC OPERATIONS:")
-        print("  1. Decompose projection matrix P into K, R, t")
-        print("  2. Reconstruct P from K, R, t")
-        print()
-        print("FEATURE MATCHING:")
-        print("  3. Robust SIFT matching (with horizontal filtering)")
-        print("  4. Manual correspondences input")
-        print("  19. SIFT matching (without horizontal filtering) - DEBUG")
-        print()
-        print("FUNDAMENTAL MATRIX:")
-        print("  5. Set RANSAC threshold")
-        print("  6. Run RANSAC to compute fundamental matrix F")
-        print("  7. Compute essential matrix E from F")
-        print()
-        print("VISUALIZATION & ANALYSIS:")
-        print("  8. Interactive epipolar view (F)")
-        print("  9. Interactive epipolar view (E)")
-        print("  10. Matrix diagnostics and validation")
-        print("  13. Plot all SIFT matches")
-        print("  14. Plot inlier matches after RANSAC")
-        print("  15. Draw epipolar lines")
-        print("  16. Complete epipolar geometry analysis")
-        print("  17. Plot combined epipolar lines (F vs E)")
-        print()
-        print("ADVANCED:")
-        print("  11. Image rectification")
-        print("  12. Compute disparity map")
-        print("  18. Camera calibration with chessboard")
-        print()
-        print("  0. Exit")
-        print("="*60)
 
     # Calibration data
     rvecs = [
@@ -1120,10 +1043,10 @@ def main():
     # Compute average pose
     R_avg, t_avg = compute_average_pose(rvecs, tvecs)
     
-    # Updated camera matrix from calibration with newly calibrated values
+    # Updated camera matrix from calibration with average pose
     K = np.array([
-        [1.20667143e+03, 0.00000000e+00, 4.74141423e+02],
-        [0.00000000e+00, 1.21631298e+03, 8.09974373e+02],
+        [1.55762650e+03, 0.00000000e+00, 1.00726807e+03],
+        [0.00000000e+00, 1.55603801e+03, 7.45444599e+02],
         [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]
     ])
     
@@ -1139,300 +1062,256 @@ def main():
     robust_sift_ran = False
     ransac_ran = False
     E_computed = False
-
-    # Updated projection matrix with calibrated camera matrix
-    P = np.array([
-        [1.20667143e+03, 0.00000000e+00, 4.74141423e+02, 0.0],  
-        [0.00000000e+00, 1.21631298e+03, 8.09974373e+02, 0.0],  
-        [0.00000000e+00, 0.00000000e+00, 1.00000000e+00, 0.0]   
-    ]) # Updated projection matrix with calibrated values
-
-    def caso_0():
-        nonlocal flag
-        flag = False
-
-    def caso_1():
-        nonlocal K, R, tras
-        K, R, tras = krt_descomposition(P)
-        return f"\nK =\n{K}\nR =\n{R}\nt =\n{tras}"
-
-    def caso_2():
-        return f"P reconstruida =\n{reconstruir_P(K, R, tras)}\n P original = \n{P}"
     
-    def caso_3():
-        nonlocal img_l, img_d, puntos_clave_l, puntos_clave_d, robust_sift_ran
-        sift = cv2.SIFT_create()
-        kp1, des1 = sift.detectAndCompute(img_l, None)
-        kp2, des2 = sift.detectAndCompute(img_d, None)
-        idx_l, idx_d = robust_numpy_matching(des1, des2)
-        puntos_clave_l = np.array([kp1[i].pt for i in idx_l], dtype=np.float32)
-        puntos_clave_d = np.array([kp2[i].pt for i in idx_d], dtype=np.float32)
-        # Filter by angle (horizontal matches only)
-        puntos_clave_l, puntos_clave_d = filter_horizontal_matches(puntos_clave_l, puntos_clave_d, max_angle_deg=30)
-        robust_sift_ran = True
-        print(f"Robust SIFT matches found (horizontal only): {len(puntos_clave_l)}")
-        plot_sift_matches(img_l, img_d, puntos_clave_l, puntos_clave_d)
-        return "Plotted robust SIFT matches (NumPy matcher, cross-checked, horizontal only)."
+    while(flag):
+        # Updated camera matrix from calibration
+        P = np.array([
+            [1.55762650e+03, 0.00000000e+00, 1.00726807e+03, -0.09227338],  
+            [0.00000000e+00, 1.55603801e+03, 7.45444599e+02, -0.36235900],  
+            [0.00000000e+00, 0.00000000e+00, 1.00000000e+00, 3.10268713]   
+        ]) #Matriz Calibracion actualizada con rotación y traslación
 
-    def caso_4():
-        nonlocal puntos_clave_l, puntos_clave_d
-        puntos_clave_l, puntos_clave_d = manual_correspondences()
-        print(f"Manual correspondences loaded: {len(puntos_clave_l)} pairs.")
-        return "Manual correspondences loaded."
+        def caso_0():
+            nonlocal flag
+            flag = False
 
-    def caso_5():
-        global RANSAC_THRESHOLD
-        t = float(input(f"Current RANSAC threshold is {RANSAC_THRESHOLD}. Enter new threshold: "))
-        RANSAC_THRESHOLD = t
-        print(f"RANSAC threshold set to {RANSAC_THRESHOLD}")
-        return f"RANSAC threshold set to {RANSAC_THRESHOLD}"
+        def caso_1():
+            nonlocal K, R, tras
+            K, R, tras = krt_descomposition(P)
+            return f"\nK =\n{K}\nR =\n{R}\nt =\n{tras}"
 
-    def caso_6():
-        nonlocal F, puntos, robust_sift_ran, ransac_ran, puntos_l, puntos_d
-        if not robust_sift_ran:
-            print("WARNING: You should run option 3 (robust SIFT) or option 19 (SIFT without filtering) before running RANSAC!")
-            return "Aborted: Run option 3 or 19 first."
+        def caso_2():
+            return f"P reconstruida =\n{reconstruir_P(K, R, tras)}\n P original = \n{P}"
         
-        if puntos_clave_l is None or len(puntos_clave_l) < 8:
-            print(f"ERROR: Not enough matches for RANSAC. Found: {len(puntos_clave_l) if puntos_clave_l is not None else 0}")
-            print("Try option 19 to test SIFT matching without horizontal filtering.")
-            return "Aborted: Not enough matches for RANSAC."
-            
-        r = 50000
-        print(f"Running RANSAC with {len(puntos_clave_l)} matches...")
-        F, puntos = ransac(puntos_clave_l, puntos_clave_d, r, RANSAC_THRESHOLD)
-        
-        if F is None or len(puntos) < 8:
-            print("RANSAC failed to find a good fundamental matrix.")
-            print("Try:")
-            print("- Adjusting RANSAC threshold (option 5)")
-            print("- Using option 19 to test without horizontal filtering")
-            print("- Using option 4 for manual correspondences")
-            return "RANSAC failed. Try adjusting parameters."
-            
-        ransac_ran = True
-        # Extract points from the RANSAC results
-        puntos_l = np.array([p[0] for p in puntos])
-        puntos_d = np.array([p[1] for p in puntos])
-        
-        print(f"RANSAC successful! Found {len(puntos)} inliers with threshold {RANSAC_THRESHOLD}")
-        print("Now run option 7 to compute the essential matrix E.")
-        return f"RANSAC completed successfully with {len(puntos)} inliers."
-
-    def caso_7():
-        nonlocal E, F, K, E_computed
-        if F is None:
-            print("WARNING: You should run RANSAC (option 6) before computing E!")
-            return "Aborted: Run option 6 first."
-        E = calcular_matriz_E(F,K)
-        E_computed = True
-        print("Now run option 10 to check diagnostics and visualize epipolar lines.")
-        return f"Matriz Esencial =\n {E}"
-
-    def caso_8():
-        nonlocal img_l, img_d, F
-        if F is None:
-            print("You must run RANSAC (option 6) first.")
-            return "Aborted: F not available."
-        interactive_epipolar_view(img_l, img_d, F)
-        return "Interactive epipolar view finished."
-
-    def caso_9():
-        nonlocal img_l, img_d, E, K
-        if E is None or K is None:
-            print("You must compute E (option 7) and have K available.")
-            return "Aborted: E or K not available."
-        interactive_epipolar_view_E(img_l, img_d, E, K)
-        return "Interactive epipolar view with E finished."
-
-    def caso_10():
-        nonlocal F, E, K, puntos_l, puntos_d, E_computed
-        if not E_computed:
-            print("WARNING: You should compute E (option 7) before running diagnostics!")
-            return "Aborted: Run option 7 first."
-        check_matrix_properties(F, E, K, puntos_l, puntos_d)
-        visualizar_epipolar_validation(img_l, img_d, F, puntos_l, puntos_d, E=E, K=K)
-        print("Mean epipolar error:", mean_epipolar_error(F, puntos_l, puntos_d))
-        return "Diagnostic check completed"
-    
-    def caso_11():
-        nonlocal puntos_clave_l, puntos_clave_d, F, img_l, img_d
-
-        if puntos_clave_l is None or puntos_clave_d is None or len(puntos_clave_l) < 11:
-            print("Not enough points for rectification. Need at least 11 correspondences.")
-            return "Aborted: Not enough correspondences."
-
-        # Use only (x, y)
-        pts1 = puntos_clave_l[:, :2]
-        pts2 = puntos_clave_d[:, :2]
-
-        # Compute left epipole
-        _, _, Vt = np.linalg.svd(F)
-        eL = Vt[-1]
-        eL = eL / eL[2]
-
-        # Compute translation to move a point to the origin
-        y_o = pts1[10]
-        Ttrans = np.array([
-            [1, 0, -y_o[0]],
-            [0, 1, -y_o[1]],
-            [0, 0, 1]
-        ])
-        eL_ = Ttrans @ eL
-
-        # Rotation to align epipole with x-axis
-        theta = np.arctan2(eL_[1], eL_[0])
-        Trot = np.array([
-            [np.cos(theta), np.sin(theta), 0],
-            [-np.sin(theta),  np.cos(theta), 0],
-            [0, 0, 1]
-        ])
-        eL_hat = Trot @ eL_
-        if np.abs(eL_hat[0]) < 1e-6:
-            print("Epipole is at infinity or too close to y-axis.")
-            return "Aborted: Epipole problem."
-
-        # Projective transform to send epipole to infinity
-        H_inf = np.array([
-            [1, 0 ,0],
-            [0, 1, 0],
-            [-1/eL_hat[0], 0, 1]
-        ])
-        HL = H_inf @ Trot @ Ttrans
-
-        # Transform points
-        p_l_h = np.hstack([pts1, np.ones((len(pts1), 1))])
-        p_r_h = np.hstack([pts2, np.ones((len(pts2), 1))])
-        yL_tilde = (HL @ p_l_h.T).T
-        yL_tilde /= yL_tilde[:, 2:3]
-
-        # Now, find a homography for the right image (HD) that aligns the y-coordinates
-        # Use least-squares to fit a 1D affine transform: yL_tilde[:,1] ≈ a*yR_tilde[:,1] + b
-        # For simplicity, use identity for HD (not optimal, but avoids explosion)
-        HD = np.eye(3)
-
-        # Plot
-        plot_rectified_points(img_l, img_d, pts1, pts2, HL, HD)
-        return f"Matriz HL = {HL},\n Matriz HD = {HD}"
-        
-
-    def caso_12():
-        nonlocal img_l, img_d
-        # Compute disparity map
-        disparity_map = compute_disparity_map(
-            img_l, 
-            img_d,
-            max_disparity=100,  # Adjust based on your needs
-            kernel_size=5,      # Adjust based on your needs
-            use_subpixel=True
-        )
-        
-        # Visualize results
-        visualize_disparity(disparity_map, "Computed Disparity Map")
-        
-        return "Disparity map computation completed."
-        
-
-    def caso_13():
-        nonlocal img_l, img_d, puntos_clave_l, puntos_clave_d
-        plot_sift_matches(img_l, img_d, puntos_clave_l, puntos_clave_d)
-        return "Plotted all SIFT matches."
-
-    def caso_14():
-        nonlocal img_l, img_d, puntos
-        plot_inlier_matches(img_l, img_d, puntos)
-        return "Plotted inlier matches after RANSAC."
-
-    def caso_15():
-        draw_epipolar_lines(img_l, img_d, F, puntos_l, puntos_d)
-        return "Epipolar lines drawn."
-
-    def caso_16():
-        nonlocal img_l, img_d, F, E, K, puntos_l, puntos_d
-        if puntos_l is None or puntos_d is None or len(puntos_l) < 8:
-            print("You must run RANSAC (option 6) first to get good correspondences.")
-            return "Aborted: Run RANSAC first."
-        analyze_epipolar_geometry(img_l, img_d, F, E, K, puntos_l, puntos_d)
-        return "Epipolar geometry analysis completed."
-
-    def caso_17():
-        nonlocal img_l, img_d, F, E, K, puntos_l, puntos_d
-        if puntos_l is None or puntos_d is None or len(puntos_l) < 8:
-            print("You must run RANSAC (option 6) first to get good correspondences.")
-            return "Aborted: Run RANSAC first."
-        plot_combined_epipolar_lines(img_l, img_d, F, E, K, puntos_l, puntos_d)
-        return "Epipolar lines plotted."
-
-    def caso_18():
-        nonlocal img_l, img_d
-        image_files = glob.glob('fotos_calibracion/*.jpg')
-        ret, mtx, dist, rvecs, tvecs = calibracion_camara_chessboard(
-            image_files, chessboard_size=(7,7), square_size=2.4, show_corners=True
-        )
-        print(f"RMS re-projection error: {ret}")
-        print(f"Camera matrix:\n{mtx}")
-        print(f"Distortion coefficients:\n{dist}")
-        print(f"Rotation vectors:\n{rvecs}")
-        print(f"Translation vectors:\n{tvecs}")
-        return "Calibración de la cámara completada."
-
-    def caso_19():
-        nonlocal img_l, img_d, puntos_clave_l, puntos_clave_d, robust_sift_ran
-        print("Testing SIFT matching WITHOUT horizontal filtering...")
-        sift = cv2.SIFT_create()
-        kp1, des1 = sift.detectAndCompute(img_l, None)
-        kp2, des2 = sift.detectAndCompute(img_d, None)
-        
-        if des1 is None or des2 is None:
-            return "ERROR: No SIFT descriptors found in one or both images!"
-        
-        idx_l, idx_d = robust_numpy_matching(des1, des2)
-        puntos_clave_l = np.array([kp1[i].pt for i in idx_l], dtype=np.float32)
-        puntos_clave_d = np.array([kp2[i].pt for i in idx_d], dtype=np.float32)
-        
-        print(f"Total SIFT matches found (before horizontal filtering): {len(puntos_clave_l)}")
-        
-        if len(puntos_clave_l) > 0:
-            plot_sift_matches(img_l, img_d, puntos_clave_l, puntos_clave_d)
+        def caso_3():
+            nonlocal img_l, img_d, puntos_clave_l, puntos_clave_d, robust_sift_ran
+            sift = cv2.SIFT_create()
+            kp1, des1 = sift.detectAndCompute(img_l, None)
+            kp2, des2 = sift.detectAndCompute(img_d, None)
+            idx_l, idx_d = robust_numpy_matching(des1, des2)
+            puntos_clave_l = np.array([kp1[i].pt for i in idx_l], dtype=np.float32)
+            puntos_clave_d = np.array([kp2[i].pt for i in idx_d], dtype=np.float32)
+            # Filter by angle (horizontal matches only)
+            puntos_clave_l, puntos_clave_d = filter_horizontal_matches(puntos_clave_l, puntos_clave_d, max_angle_deg=20)
             robust_sift_ran = True
-            return f"Found {len(puntos_clave_l)} SIFT matches without horizontal filtering."
-        else:
-            return "No SIFT matches found. Check if images have enough features."
+            print(f"Robust SIFT matches found (horizontal only): {len(puntos_clave_l)}")
+            plot_sift_matches(img_l, img_d, puntos_clave_l, puntos_clave_d)
+            return "Plotted robust SIFT matches (NumPy matcher, cross-checked, horizontal only)."
 
-    switch = {
-        "0": caso_0,
-        "1": caso_1,
-        "2": caso_2,
-        "3": caso_3,
-        "4": caso_4,
-        "5": caso_5,
-        "6": caso_6,
-        "7": caso_7,
-        "8": caso_8,
-        "9": caso_9,
-        "10": caso_10,
-        "11": caso_11,
-        "12": caso_12,
-        "13": caso_13,
-        "14": caso_14,
-        "15": caso_15,
-        "16": caso_16,
-        "17": caso_17,
-        "18": caso_18,
-        "19": caso_19
-    }
+        def caso_4():
+            nonlocal puntos_clave_l, puntos_clave_d
+            puntos_clave_l, puntos_clave_d = manual_correspondences()
+            print(f"Manual correspondences loaded: {len(puntos_clave_l)} pairs.")
+            return "Manual correspondences loaded."
 
-    show_menu()  # Show menu at start
-    
-    while flag:
-        opcion = input("\nElige una opción (0-19): ")
+        def caso_5():
+            global RANSAC_THRESHOLD
+            t = float(input(f"Current RANSAC threshold is {RANSAC_THRESHOLD}. Enter new threshold: "))
+            RANSAC_THRESHOLD = t
+            print(f"RANSAC threshold set to {RANSAC_THRESHOLD}")
+            return f"RANSAC threshold set to {RANSAC_THRESHOLD}"
+
+        def caso_6():
+            nonlocal F, puntos, robust_sift_ran, ransac_ran, puntos_l, puntos_d
+            if not robust_sift_ran:
+                print("WARNING: You should run option 3 (robust SIFT) before running RANSAC!")
+                return "Aborted: Run option 3 first."
+            r = 50000
+            F, puntos = ransac(puntos_clave_l, puntos_clave_d, r, RANSAC_THRESHOLD)
+            ransac_ran = True
+            # Extract points from the RANSAC results
+            if len(puntos) > 7:
+                puntos_l = np.array([p[0] for p in puntos])
+                puntos_d = np.array([p[1] for p in puntos])
+            else:
+                print("No se han encontrado suficientes puntos para calcular la matriz fundamental")
+                caso_6()
+            print(f"Rerun RANSAC with threshold {RANSAC_THRESHOLD}. Inliers: {len(puntos)}")
+            print("Now run option 7 to compute the essential matrix E.")
+            return f"RANSAC rerun with threshold {RANSAC_THRESHOLD}."
+
+        def caso_7():
+            nonlocal E, F, K, E_computed
+            if F is None:
+                print("WARNING: You should run RANSAC (option 6) before computing E!")
+                return "Aborted: Run option 6 first."
+            E = calcular_matriz_E(F,K)
+            E_computed = True
+            print("Now run option 10 to check diagnostics and visualize epipolar lines.")
+            return f"Matriz Esencial =\n {E}"
+
+        def caso_8():
+            nonlocal img_l, img_d, F
+            if F is None:
+                print("You must run RANSAC (option 6) first.")
+                return "Aborted: F not available."
+            interactive_epipolar_view(img_l, img_d, F)
+            return "Interactive epipolar view finished."
+
+        def caso_9():
+            nonlocal img_l, img_d, E, K
+            if E is None or K is None:
+                print("You must compute E (option 7) and have K available.")
+                return "Aborted: E or K not available."
+            interactive_epipolar_view_E(img_l, img_d, E, K)
+            return "Interactive epipolar view with E finished."
+
+        def caso_10():
+            nonlocal F, E, K, puntos_l, puntos_d, E_computed
+            if not E_computed:
+                print("WARNING: You should compute E (option 7) before running diagnostics!")
+                return "Aborted: Run option 7 first."
+            check_matrix_properties(F, E, K, puntos_l, puntos_d)
+            visualizar_epipolar_validation(img_l, img_d, F, puntos_l, puntos_d, E=E, K=K)
+            print("Mean epipolar error:", mean_epipolar_error(F, puntos_l, puntos_d))
+            return "Diagnostic check completed"
+        
+        def caso_11():
+            nonlocal puntos_clave_l, puntos_clave_d, F, img_l, img_d
+
+            if puntos_clave_l is None or puntos_clave_d is None or len(puntos_clave_l) < 11:
+                print("Not enough points for rectification. Need at least 11 correspondences.")
+                return "Aborted: Not enough correspondences."
+
+            # Use only (x, y)
+            pts1 = puntos_clave_l[:, :2]
+            pts2 = puntos_clave_d[:, :2]
+
+            # Compute left epipole
+            _, _, Vt = np.linalg.svd(F)
+            eL = Vt[-1]
+            eL = eL / eL[2]
+
+            # Compute translation to move a point to the origin
+            y_o = pts1[10]
+            Ttrans = np.array([
+                [1, 0, -y_o[0]],
+                [0, 1, -y_o[1]],
+                [0, 0, 1]
+            ])
+            eL_ = Ttrans @ eL
+
+            # Rotation to align epipole with x-axis
+            theta = np.arctan2(eL_[1], eL_[0])
+            Trot = np.array([
+                [np.cos(theta), np.sin(theta), 0],
+                [-np.sin(theta),  np.cos(theta), 0],
+                [0, 0, 1]
+            ])
+            eL_hat = Trot @ eL_
+            if np.abs(eL_hat[0]) < 1e-6:
+                print("Epipole is at infinity or too close to y-axis.")
+                return "Aborted: Epipole problem."
+
+            # Projective transform to send epipole to infinity
+            H_inf = np.array([
+                [1, 0 ,0],
+                [0, 1, 0],
+                [-1/eL_hat[0], 0, 1]
+            ])
+            HL = H_inf @ Trot @ Ttrans
+
+            # Transform points
+            p_l_h = np.hstack([pts1, np.ones((len(pts1), 1))])
+            p_r_h = np.hstack([pts2, np.ones((len(pts2), 1))])
+            yL_tilde = (HL @ p_l_h.T).T
+            yL_tilde /= yL_tilde[:, 2:3]
+
+            # Now, find a homography for the right image (HD) that aligns the y-coordinates
+            # Use least-squares to fit a 1D affine transform: yL_tilde[:,1] ≈ a*yR_tilde[:,1] + b
+            # For simplicity, use identity for HD (not optimal, but avoids explosion)
+            HD = np.eye(3)
+
+            # Plot
+            plot_rectified_points(img_l, img_d, pts1, pts2, HL, HD)
+            return f"Matriz HL = {HL},\n Matriz HD = {HD}"
+            
+
+        def caso_12():
+            nonlocal img_l, img_d
+            # Compute disparity map
+            disparity_map = compute_disparity_map(
+                img_l, 
+                img_d,
+                max_disparity=100,  # Adjust based on your needs
+                kernel_size=5,      # Adjust based on your needs
+                use_subpixel=True
+            )
+            
+            # Visualize results
+            visualize_disparity(disparity_map, "Computed Disparity Map")
+            
+            return "Disparity map computation completed."
+            
+
+        def caso_13():
+            nonlocal img_l, img_d, puntos_clave_l, puntos_clave_d
+            plot_sift_matches(img_l, img_d, puntos_clave_l, puntos_clave_d)
+            return "Plotted all SIFT matches."
+
+        def caso_14():
+            nonlocal img_l, img_d, puntos
+            plot_inlier_matches(img_l, img_d, puntos)
+            return "Plotted inlier matches after RANSAC."
+
+        def caso_15():
+            draw_epipolar_lines(img_l, img_d, F, puntos_l, puntos_d)
+            
+
+        def caso_16():
+            nonlocal img_l, img_d, F, E, K, puntos_l, puntos_d
+            if puntos_l is None or puntos_d is None or len(puntos_l) < 8:
+                print("You must run RANSAC (option 6) first to get good correspondences.")
+                return "Aborted: Run RANSAC first."
+            analyze_epipolar_geometry(img_l, img_d, F, E, K, puntos_l, puntos_d)
+            return "Epipolar geometry analysis completed."
+
+        def caso_17():
+            nonlocal img_l, img_d, F, E, K, puntos_l, puntos_d
+            if puntos_l is None or puntos_d is None or len(puntos_l) < 8:
+                print("You must run RANSAC (option 6) first to get good correspondences.")
+                return "Aborted: Run RANSAC first."
+            plot_combined_epipolar_lines(img_l, img_d, F, E, K, puntos_l, puntos_d)
+            return "Epipolar lines plotted."
+
+        def caso_18():
+            nonlocal img_l, img_d
+            image_files = glob.glob('Muestra/*.jpeg')  # Path to your chessboard images
+            ret, mtx, dist, rvecs, tvecs = calibracion_camara_chessboard(
+                image_files, chessboard_size=(7,7), square_size=2.4, show_corners=True
+            )
+            print(f"RMS re-projection error: {ret}")
+            print(f"Camera matrix:\n{mtx}")
+            print(f"Distortion coefficients:\n{dist}")
+            print(f"Rotation vectors:\n{rvecs}")
+            print(f"Translation vectors:\n{tvecs}")
+            return "Calibración de la cámara completada."
+
+        switch = {
+            "0": caso_0,
+            "1": caso_1,
+            "2": caso_2,
+            "3": caso_3,
+            "4": caso_4,
+            "5": caso_5,
+            "6": caso_6,
+            "7": caso_7,
+            "8": caso_8,
+            "9": caso_9,
+            "10": caso_10,
+            "11": caso_11,
+            "12": caso_12,
+            "13": caso_13,
+            "14": caso_14,
+            "15": caso_15,
+            "16": caso_16,
+            "17": caso_17,
+            "18": caso_18
+        }
+
+        opcion = input("Elige una opción (0-17): ")
         resultado = switch.get(opcion, lambda: "Opción no válida")()
         print(resultado)
-        
-        # Show menu again after each operation (except exit)
-        if opcion != "0":
-            input("\nPresiona Enter para continuar...")
-            show_menu()
 
 
 if __name__ == '__main__':
