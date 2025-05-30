@@ -305,9 +305,7 @@ def calcular_matriz_E(F,K):
     return E
 
 def check_matrix_properties(F, E, K, puntos_l, puntos_d):
-    """
-    Diagnostic function to check properties of matrices and points
-    """
+
     print("\n=== Matrix Properties Check ===")
     
     # Check F
@@ -347,9 +345,7 @@ def check_matrix_properties(F, E, K, puntos_l, puntos_d):
     print(f"Mean epipolar error: {np.mean(np.abs(errors))}")
 
 def visualizar_epipolar_validation(img_l, img_d, F, puntos_l, puntos_d, E=None, K=None, num_points=5):
-    """
-    Visualize epipolar lines for validation (both F and E if provided)
-    """
+
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7))
     img_l_rgb = cv2.cvtColor(img_l, cv2.COLOR_BGR2RGB)
     img_d_rgb = cv2.cvtColor(img_d, cv2.COLOR_BGR2RGB)
@@ -410,12 +406,30 @@ def visualizar_epipolar_validation(img_l, img_d, F, puntos_l, puntos_d, E=None, 
     ax2.set_title('Right Image with Epipolar Lines')
     plt.tight_layout()
     plt.show()
+    
+    # Show side-by-side comparison with horizontal lines
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+    
+    ax1.imshow(cv2.cvtColor(img_l_rectified, cv2.COLOR_BGR2RGB))
+    ax1.set_title('Rectified Left Image')
+    ax1.axis('off')
+    
+    ax2.imshow(cv2.cvtColor(img_d_rectified, cv2.COLOR_BGR2RGB))
+    ax2.set_title('Rectified Right Image')
+    ax2.axis('off')
+    
+    # Draw horizontal lines to verify rectification
+    for y in range(50, h, 100):
+        ax1.axhline(y=y, color='red', linewidth=1, alpha=0.7)
+        ax2.axhline(y=y, color='red', linewidth=1, alpha=0.7)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return img_l_rectified, img_d_rectified
 
 def robust_sift_matching(img_l, img_d, ratio_thresh=0.75):
-    """
-    SIFT matching with Lowe's ratio test and cross-checking.
-    Returns filtered keypoints and matches.
-    """
+
     
     sift = cv2.SIFT_create()
     kp1, des1 = sift.detectAndCompute(img_l, None)
@@ -447,10 +461,7 @@ def robust_sift_matching(img_l, img_d, ratio_thresh=0.75):
     return puntos_l, puntos_d, good, kp1, kp2
 
 def manual_correspondences():
-    """
-    Allow user to manually input a small set of correspondences for testing.
-    Returns two lists of points.
-    """
+
     print("Manual correspondences mode. Enter coordinates as x y (e.g., 100 200). Type 'done' to finish.")
     puntos_l = []
     puntos_d = []
@@ -469,10 +480,7 @@ def manual_correspondences():
 RANSAC_THRESHOLD = 10
 
 def interactive_epipolar_view(img_l, img_d, F):
-    """
-    Interactive function: user clicks a point in the left or right image,
-    and the corresponding epipolar line is drawn in the other image.
-    """
+
     def draw_line(ax, line, shape, color='g'):
         a, b, c = line
         h, w = shape[:2]
@@ -506,6 +514,7 @@ def interactive_epipolar_view(img_l, img_d, F):
             axs[0].scatter(x_img, y_img, color='red', s=60)
             p = np.array([x_img, y_img, 1])
             l = F @ p  # Epipolar line in right image
+            print(f"[F] Epipolar line in RIGHT image for point ({x_img:.2f}, {y_img:.2f}) in LEFT: a={l[0]:.6f}, b={l[1]:.6f}, c={l[2]:.6f}")
             draw_line(axs[1], l, img_d.shape, color='g')
             axs[1].set_title('Right Image (epipolar line shown)')
         else:
@@ -514,17 +523,17 @@ def interactive_epipolar_view(img_l, img_d, F):
             axs[1].scatter(x_img, y_img, color='blue', s=60)
             p = np.array([x_img, y_img, 1])
             l = F.T @ p  # Epipolar line in left image
+            print(f"[F] Epipolar line in LEFT image for point ({x_img:.2f}, {y_img:.2f}) in RIGHT: a={l[0]:.6f}, b={l[1]:.6f}, c={l[2]:.6f}")
             draw_line(axs[0], l, img_l.shape, color='g')
             axs[0].set_title('Left Image (epipolar line shown)')
         plt.draw()
     plt.close(fig)
     print("Interactive epipolar view closed.")
+    return "Interactive epipolar view finished."
 
 def interactive_epipolar_view_E(img_l, img_d, E, K):
-    """
-    Interactive function: user clicks a point in the left or right image,
-    and the corresponding epipolar line is drawn in the other image using the essential matrix E.
-    """
+
+
     def draw_line(ax, line, shape, color='m'):
         a, b, c = line
         h, w = shape[:2]
@@ -556,11 +565,10 @@ def interactive_epipolar_view_E(img_l, img_d, E, K):
             x_img, y_img = x, y
             axs[0].scatter(x_img, y_img, color='red', s=60)
             p = np.array([x_img, y_img, 1])
-            # Normalize point
             p_norm = np.linalg.inv(K) @ p
             l = E @ p_norm  # Epipolar line in right normalized coords
-            # Convert line to pixel coords: l' = K^-T l
             l_pix = np.linalg.inv(K).T @ l
+            print(f"[E] Epipolar line in RIGHT image (pixels) for point ({x_img:.2f}, {y_img:.2f}) in LEFT: a={l_pix[0]:.6f}, b={l_pix[1]:.6f}, c={l_pix[2]:.6f}")
             draw_line(axs[1], l_pix, img_d.shape, color='m')
             axs[1].set_title('Right Image (epipolar line from E)')
         else:
@@ -571,203 +579,180 @@ def interactive_epipolar_view_E(img_l, img_d, E, K):
             p_norm = np.linalg.inv(K) @ p
             l = E.T @ p_norm  # Epipolar line in left normalized coords
             l_pix = np.linalg.inv(K).T @ l
+            print(f"[E] Epipolar line in LEFT image (pixels) for point ({x_img:.2f}, {y_img:.2f}) in RIGHT: a={l_pix[0]:.6f}, b={l_pix[1]:.6f}, c={l_pix[2]:.6f}")
             draw_line(axs[0], l_pix, img_l.shape, color='m')
             axs[0].set_title('Left Image (epipolar line from E)')
         plt.draw()
     plt.close(fig)
     print("Interactive epipolar view (E) closed.")
+    return "Interactive epipolar view with E finished."
 
-def block_matching(left, right, max_disparity=64, kernel_size=5, use_subpixel=True):
+def compute_disparity_map_opencv(img_l, img_d, method='SGBM', **kwargs):
     """
-    Block matching algorithm for stereo disparity estimation.
+    Compute disparity map using OpenCV's optimized stereo matchers.
     
     Args:
-        left: Left image (grayscale)
-        right: Right image (grayscale)
-        max_disparity: Maximum disparity to search for
-        kernel_size: Size of the matching window
-        use_subpixel: Whether to use subpixel refinement
+        img_l: Left image
+        img_d: Right image  
+        method: 'BM' for StereoBM or 'SGBM' for StereoSGBM
+        **kwargs: Additional parameters for the stereo matcher
     
     Returns:
         disparity_map: Computed disparity map
     """
-    # Get image dimensions
-    height, width = left.shape
+    # Convert to grayscale if needed
+    if len(img_l.shape) == 3:
+        gray_l = cv2.cvtColor(img_l, cv2.COLOR_BGR2GRAY)
+        gray_d = cv2.cvtColor(img_d, cv2.COLOR_BGR2GRAY)
+    else:
+        gray_l = img_l.copy()
+        gray_d = img_d.copy()
     
-    # Initialize disparity map
-    disparity_map = np.zeros((height, width), dtype=np.float32)
+    if method == 'BM':
+        # StereoBM parameters
+        block_size = kwargs.get('block_size', 15)
+        num_disparities = kwargs.get('num_disparities', 64)
+        
+        # Create StereoBM object
+        stereo = cv2.StereoBM_create(numDisparities=num_disparities, blockSize=block_size)
+        
+        # Additional BM parameters
+        stereo.setPreFilterType(cv2.STEREO_BM_PREFILTER_XSOBEL)
+        stereo.setPreFilterSize(kwargs.get('prefilter_size', 9))
+        stereo.setPreFilterCap(kwargs.get('prefilter_cap', 31))
+        stereo.setTextureThreshold(kwargs.get('texture_threshold', 10))
+        stereo.setUniquenessRatio(kwargs.get('uniqueness_ratio', 15))
+        stereo.setSpeckleRange(kwargs.get('speckle_range', 32))
+        stereo.setSpeckleWindowSize(kwargs.get('speckle_window_size', 100))
+        
+    elif method == 'SGBM':
+        # StereoSGBM parameters
+        block_size = kwargs.get('block_size', 5)
+        num_disparities = kwargs.get('num_disparities', 64)
+        
+        # Create StereoSGBM object
+        stereo = cv2.StereoSGBM_create(
+            minDisparity=kwargs.get('min_disparity', 0),
+            numDisparities=num_disparities,
+            blockSize=block_size,
+            P1=kwargs.get('P1', 8 * 3 * block_size**2),
+            P2=kwargs.get('P2', 32 * 3 * block_size**2),
+            disp12MaxDiff=kwargs.get('disp12_max_diff', 1),
+            uniquenessRatio=kwargs.get('uniqueness_ratio', 10),
+            speckleWindowSize=kwargs.get('speckle_window_size', 100),
+            speckleRange=kwargs.get('speckle_range', 32),
+            preFilterCap=kwargs.get('prefilter_cap', 63),
+            mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY
+        )
+    else:
+        raise ValueError("Method must be 'BM' or 'SGBM'")
     
-    # Calculate kernel half size
-    kernel_half = kernel_size // 2
-    
-    # Convert images to float for better precision
-    left = left.astype(np.float32)
-    right = right.astype(np.float32)
-    print("block matching")
-    # For each pixel in the image (except borders)
-    for i in range(kernel_half, height - kernel_half):
-        for j in range(max_disparity, width - kernel_half):
-            # Initialize variables for best match
-            best_offset = -1
-            min_error = float('inf')
-            errors = np.zeros(max_disparity)
-            
-            # For each possible disparity
-            for offset in range(max_disparity):
-                error = 0.0
-                
-                # Compute SSD over the window
-                for x in range(-kernel_half, kernel_half + 1):
-                    for y in range(-kernel_half, kernel_half + 1):
-                        # Get pixel values from both images
-                        left_val = left[i + x, j + y]
-                        right_val = right[i + x, j + y - offset]
-                        
-                        # Compute squared difference
-                        diff = left_val - right_val
-                        error += diff * diff
-                
-                # Store error for this disparity
-                errors[offset] = error
-                
-                # Update best match if this is better
-                if error < min_error:
-                    min_error = error
-                    best_offset = offset
-            
-            # Subpixel refinement
-            subpixel_offset = 0.0
-            if use_subpixel and best_offset > 0 and best_offset < max_disparity - 1:
-                error_left = errors[best_offset - 1]
-                error_right = errors[best_offset + 1]
-                
-                # Avoid division by zero
-                denominator = error_left - 2 * min_error + error_right
-                if abs(denominator) > 1e-6:
-                    subpixel_offset = 0.5 * (error_left - error_right) / denominator
-            
-            # Store final disparity
-            disparity_map[i, j] = best_offset + subpixel_offset
-    print("block matching finalizado")
-    
-    return disparity_map
-
-def compute_disparity_map(left_img, right_img, max_disparity=100, kernel_size=5, use_subpixel=True):
-    """ 
-    Wrapper function to compute disparity map from RGB images.
-    
-    Args:
-        left_img: Left RGB image
-        right_img: Right RGB image
-        max_disparity: Maximum disparity to search for
-        kernel_size: Size of the matching window
-        use_subpixel: Whether to use subpixel refinement
-    
-    Returns:
-        disparity_map: Computed disparity map
-    """
-    print("compute_disparity_map")
-    # Convert RGB to grayscale
-    def rgb2gray(rgb):
-        print("rgb2gray")
-        return np.dot(rgb[...,:3], [0.299, 0.587, 0.114])
-    
-    # Convert images to grayscale
-    left_gray = rgb2gray(left_img)
-    right_gray = rgb2gray(right_img)
+    print(f"Computing disparity map using {method}...")
     
     # Compute disparity map
-    disparity_map = block_matching(
-        left_gray, 
-        right_gray,
-        max_disparity=max_disparity,
-        kernel_size=kernel_size,
-        use_subpixel=use_subpixel
-    )
+    disparity = stereo.compute(gray_l, gray_d).astype(np.float32) / 16.0
     
-    return disparity_map
+    # Filter out invalid disparities
+    disparity[disparity <= 0] = 0
+    
+    print(f"Disparity map computed. Range: {disparity.min():.2f} to {disparity.max():.2f}")
+    
+    return disparity
 
-def visualize_disparity(disparity_map, title="Disparity Map"):
+def reconstruct_3d_opencv(disparity_map, Q_matrix, mask_disparity=True):
     """
-    Visualize the disparity map.
+    Reconstruct 3D points from disparity map using OpenCV's reprojectImageTo3D.
     
     Args:
-        disparity_map: Computed disparity map
-        title: Title for the plot
-    """
-    print("visualize_disparity")
-    plt.figure(figsize=(10, 8))
-    plt.imshow(disparity_map, cmap='plasma')
-    plt.colorbar(label='Disparity')
-    plt.title(title)
-    plt.axis('off')
-    plt.show()
-
-def reconstruct_3d(disparity_map, K, baseline, left_img=None):
-    """
-    Reconstruct 3D points from disparity map.
-    Args:
-        disparity_map: (H, W) array of disparities
-        K: Camera intrinsic matrix (3x3)
-        baseline: Distance between cameras (in same units as K)
-        left_img: Optional color image for coloring the point cloud
+        disparity_map: Disparity map from stereo matching
+        Q_matrix: 4x4 reprojection matrix from stereo rectification
+        mask_disparity: Whether to mask out invalid disparities
+    
     Returns:
-        points_3d: (N, 3) array of 3D points
-        colors: (N, 3) array of RGB colors (if left_img provided)
+        points_3d: 3D points array (H, W, 3)
     """
-    f = K[0, 0]  # Focal length in pixels
+    print("Reconstructing 3D points using OpenCV...")
+    
+    # Use OpenCV's optimized 3D reprojection
+    points_3d = cv2.reprojectImageTo3D(disparity_map, Q_matrix)
+    
+    if mask_disparity:
+        # Mask out points with invalid disparity
+        mask = disparity_map > 0
+        points_3d[~mask] = 0
+    
+    print("3D reconstruction completed using OpenCV.")
+    
+    return points_3d
+
+def create_reprojection_matrix(K, baseline):
+    """
+    Create the reprojection matrix Q for stereo reconstruction.
+    
+    Args:
+        K: Camera intrinsic matrix (3x3)
+        baseline: Distance between camera centers
+    
+    Returns:
+        Q: 4x4 reprojection matrix
+    """
+    fx = K[0, 0]
+    fy = K[1, 1] 
     cx = K[0, 2]
     cy = K[1, 2]
-    h, w = disparity_map.shape
     
-    # Create reprojection matrix
-    Q = np.float32([[1, 0, 0, -cx],
-                    [0, 1, 0, -cy],
-                    [0, 0, 0, f],
-                    [0, 0, -1/baseline, 0]])
+    Q = np.float32([
+        [1, 0, 0, -cx],
+        [0, 1, 0, -cy], 
+        [0, 0, 0, fx],
+        [0, 0, -1/baseline, 0]
+    ])
     
-    # Reproject to 3D
-    points_3d = cv2.reprojectImageTo3D(disparity_map, Q)
-    
-    # Create mask for valid disparities
-    mask = disparity_map > 0
-    
-    # Get valid 3D points
-    points_3d = points_3d[mask]
-    
-    if left_img is not None:
-        # Get colors for valid points
-        colors = left_img[mask]
-        return points_3d, colors
-    return points_3d
+    return Q
 
 def save_point_cloud(points_3d, colors, filename):
     """
     Save point cloud to PLY file.
+    
     Args:
-        points_3d: (N, 3) array of 3D points
-        colors: (N, 3) array of RGB colors
-        filename: Output PLY file name
+        points_3d: Array of 3D points (N, 3)
+        colors: Array of colors (N, 3) or None
+        filename: Output filename
     """
     # Create header
-    header = [
-        "ply",
-        "format ascii 1.0",
-        f"element vertex {len(points_3d)}",
-        "property float x",
-        "property float y",
-        "property float z",
-        "property uchar red",
-        "property uchar green",
-        "property uchar blue",
-        "end_header"
-    ]
+    if colors is not None:
+        header = [
+            "ply",
+            "format ascii 1.0",
+            f"element vertex {len(points_3d)}",
+            "property float x",
+            "property float y", 
+            "property float z",
+            "property uchar red",
+            "property uchar green",
+            "property uchar blue",
+            "end_header"
+        ]
+    else:
+        header = [
+            "ply",
+            "format ascii 1.0",
+            f"element vertex {len(points_3d)}",
+            "property float x",
+            "property float y",
+            "property float z", 
+            "end_header"
+        ]
     
     # Write to file
     with open(filename, 'w') as f:
         f.write('\n'.join(header) + '\n')
-        for point, color in zip(points_3d, colors):
-            f.write(f"{point[0]} {point[1]} {point[2]} {color[0]} {color[1]} {color[2]}\n")
+        if colors is not None:
+            for point, color in zip(points_3d, colors):
+                f.write(f"{point[0]} {point[1]} {point[2]} {int(color[0])} {int(color[1])} {int(color[2])}\n")
+        else:
+            for point in points_3d:
+                f.write(f"{point[0]} {point[1]} {point[2]}\n")
 
 def visualize_point_cloud(points_3d, colors=None):
     """
@@ -794,51 +779,51 @@ def visualize_point_cloud(points_3d, colors=None):
     plt.title('3D Point Cloud')
     plt.show()
 
-def caso_20():
+def visualize_disparity(disparity_map, title="Disparity Map"):
     """
-    Reconstruct 3D scene from stereo images.
+    Visualize disparity map.
     """
-    global img_l, img_d, K
+    print("visualize_disparity")
+    plt.figure(figsize=(10, 8))
+    plt.imshow(disparity_map, cmap='plasma')
+    plt.colorbar(label='Disparity')
+    plt.title(title)
+    plt.axis('off')
+    plt.show()
+
+def extract_valid_points_and_colors(points_3d, left_img, disparity_map, depth_threshold=1000):
+    """
+    Extract valid 3D points and their corresponding colors from the left image.
     
-    # Check if we have the camera matrix
-    if K is None:
-        print("ERROR: Camera matrix K is not available. Run camera calibration first.")
-        return "Aborted: No camera matrix available."
+    Args:
+        points_3d: 3D points array (H, W, 3)
+        left_img: Left image for color extraction
+        disparity_map: Disparity map for validity checking
+        depth_threshold: Maximum depth to consider valid
     
-    # Compute disparity map
-    print("Computing disparity map...")
-    disparity_map = compute_disparity_map(
-        img_l, 
-        img_d,
-        max_disparity=100,
-        kernel_size=5,
-        use_subpixel=True
-    )
+    Returns:
+        valid_points: Valid 3D points (N, 3)
+        colors: Corresponding colors (N, 3)
+    """
+    h, w = disparity_map.shape
     
-    # Get baseline from user
-    baseline = float(input("Enter baseline distance (in mm): "))
+    # Create validity mask
+    valid_mask = (disparity_map > 0) & (np.abs(points_3d[:, :, 2]) < depth_threshold)
     
-    # Reconstruct 3D points
-    print("Reconstructing 3D points...")
-    points_3d, colors = reconstruct_3d(disparity_map, K, baseline, img_l)
+    # Extract valid points
+    valid_points = points_3d[valid_mask]
     
-    # Ask user what to do with the point cloud
-    print("\nWhat would you like to do with the point cloud?")
-    print("1. Visualize")
-    print("2. Save to PLY file")
-    print("3. Both")
-    choice = input("Enter your choice (1-3): ")
+    # Extract corresponding colors
+    if len(left_img.shape) == 3:
+        colors = left_img[valid_mask]
+    else:
+        # If grayscale, replicate to RGB
+        gray_colors = left_img[valid_mask]
+        colors = np.column_stack([gray_colors, gray_colors, gray_colors])
     
-    if choice in ['1', '3']:
-        print("Visualizing point cloud...")
-        visualize_point_cloud(points_3d, colors)
+    print(f"Extracted {len(valid_points)} valid 3D points")
     
-    if choice in ['2', '3']:
-        filename = input("Enter filename for PLY file (e.g., pointcloud.ply): ")
-        print(f"Saving point cloud to {filename}...")
-        save_point_cloud(points_3d, colors, filename)
-    
-    return "3D reconstruction completed."
+    return valid_points, colors
 
 def encontrar_mejor_punto(puntos_l, puntos_d):
     """
@@ -914,10 +899,93 @@ def apply_homographies_and_visualize(img_l, img_d, HL, HD):
     
     return img_l_rectified, img_d_rectified
 
+def get_stereo_params(method='SGBM', quality='medium'):
+    """
+    Get optimized stereo matching parameters for different scenarios.
+    
+    Args:
+        method: 'BM' or 'SGBM'
+        quality: 'fast', 'medium', 'high'
+    
+    Returns:
+        dict: Parameter dictionary for stereo matcher
+    """
+    if method == 'BM':
+        if quality == 'fast':
+            return {
+                'num_disparities': 48,
+                'block_size': 21,
+                'prefilter_size': 9,
+                'prefilter_cap': 31,
+                'texture_threshold': 10,
+                'uniqueness_ratio': 15,
+                'speckle_range': 32,
+                'speckle_window_size': 100
+            }
+        elif quality == 'medium':
+            return {
+                'num_disparities': 64,
+                'block_size': 15,
+                'prefilter_size': 9,
+                'prefilter_cap': 31,
+                'texture_threshold': 10,
+                'uniqueness_ratio': 10,
+                'speckle_range': 32,
+                'speckle_window_size': 150
+            }
+        else:  # high quality
+            return {
+                'num_disparities': 96,
+                'block_size': 11,
+                'prefilter_size': 9,
+                'prefilter_cap': 31,
+                'texture_threshold': 10,
+                'uniqueness_ratio': 5,
+                'speckle_range': 16,
+                'speckle_window_size': 200
+            }
+    else:  # SGBM
+        if quality == 'fast':
+            return {
+                'num_disparities': 48,
+                'block_size': 7,
+                'P1': 8 * 3 * 7**2,
+                'P2': 32 * 3 * 7**2,
+                'disp12_max_diff': 2,
+                'uniqueness_ratio': 15,
+                'speckle_window_size': 50,
+                'speckle_range': 16,
+                'prefilter_cap': 63
+            }
+        elif quality == 'medium':
+            return {
+                'num_disparities': 64,
+                'block_size': 5,
+                'P1': 8 * 3 * 5**2,
+                'P2': 32 * 3 * 5**2,
+                'disp12_max_diff': 1,
+                'uniqueness_ratio': 10,
+                'speckle_window_size': 100,
+                'speckle_range': 32,
+                'prefilter_cap': 63
+            }
+        else:  # high quality
+            return {
+                'num_disparities': 96,
+                'block_size': 3,
+                'P1': 8 * 3 * 3**2,
+                'P2': 32 * 3 * 3**2,
+                'disp12_max_diff': 1,
+                'uniqueness_ratio': 5,
+                'speckle_window_size': 150,
+                'speckle_range': 16,
+                'prefilter_cap': 63
+            }
+
 def main():
     global RANSAC_THRESHOLD
-    img_l = cv2.imread('cones/disp6.png', cv2.IMREAD_COLOR)
-    img_d = cv2.imread('cones/disp2.png', cv2.IMREAD_COLOR)
+    img_l = cv2.imread('im_i.png', cv2.IMREAD_COLOR)
+    img_d = cv2.imread('im_d.png', cv2.IMREAD_COLOR)
     flag = True
 
     img_l_rect = None
@@ -1006,7 +1074,52 @@ def main():
             if F is None:
                 print("You must run RANSAC (option 22) first.")
                 return "Aborted: F not available."
-            interactive_epipolar_view(img_l, img_d, F)
+            def draw_line(ax, line, shape, color='g'):
+                a, b, c = line
+                h, w = shape[:2]
+                if abs(b) > 1e-6:
+                    x_vals = np.array([0, w])
+                    y_vals = -(a * x_vals + c) / b
+                else:
+                    y_vals = np.array([0, h])
+                    x_vals = -(b * y_vals + c) / a
+                ax.plot(x_vals, y_vals, color=color, linestyle='-', linewidth=2)
+            fig, axs = plt.subplots(1, 2, figsize=(15, 7))
+            img_l_rgb = cv2.cvtColor(img_l, cv2.COLOR_BGR2RGB)
+            img_d_rgb = cv2.cvtColor(img_d, cv2.COLOR_BGR2RGB)
+            axs[0].imshow(img_l_rgb)
+            axs[0].set_title('Left Image (click here or right)')
+            axs[1].imshow(img_d_rgb)
+            axs[1].set_title('Right Image (click here or left)')
+            plt.tight_layout()
+            print("Click a point in either image (left or right). Close the window to exit.")
+            while True:
+                pts = plt.ginput(1, timeout=0)
+                if not pts:
+                    break
+                x, y = pts[0]
+                w = img_l.shape[1]
+                if x < w:
+                    # Clicked in left image
+                    x_img, y_img = x, y
+                    axs[0].scatter(x_img, y_img, color='red', s=60)
+                    p = np.array([x_img, y_img, 1])
+                    l = F @ p  # Epipolar line in right image
+                    print(f"[F] Epipolar line in RIGHT image for point ({x_img:.2f}, {y_img:.2f}) in LEFT: a={l[0]:.6f}, b={l[1]:.6f}, c={l[2]:.6f}")
+                    draw_line(axs[1], l, img_d.shape, color='g')
+                    axs[1].set_title('Right Image (epipolar line shown)')
+                else:
+                    # Clicked in right image
+                    x_img, y_img = x - w, y
+                    axs[1].scatter(x_img, y_img, color='blue', s=60)
+                    p = np.array([x_img, y_img, 1])
+                    l = F.T @ p  # Epipolar line in left image
+                    print(f"[F] Epipolar line in LEFT image for point ({x_img:.2f}, {y_img:.2f}) in RIGHT: a={l[0]:.6f}, b={l[1]:.6f}, c={l[2]:.6f}")
+                    draw_line(axs[0], l, img_l.shape, color='g')
+                    axs[0].set_title('Left Image (epipolar line shown)')
+                plt.draw()
+            plt.close(fig)
+            print("Interactive epipolar view closed.")
             return "Interactive epipolar view finished."
 
         def caso_9():
@@ -1014,24 +1127,87 @@ def main():
             if E is None or K is None:
                 print("You must compute E (option 7) and have K available.")
                 return "Aborted: E or K not available."
-            interactive_epipolar_view_E(img_l, img_d, E, K)
+            def draw_line(ax, line, shape, color='m'):
+                a, b, c = line
+                h, w = shape[:2]
+                if abs(b) > 1e-6:
+                    x_vals = np.array([0, w])
+                    y_vals = -(a * x_vals + c) / b
+                else:
+                    y_vals = np.array([0, h])
+                    x_vals = -(b * y_vals + c) / a
+                ax.plot(x_vals, y_vals, color=color, linestyle='-', linewidth=2)
+            fig, axs = plt.subplots(1, 2, figsize=(15, 7))
+            img_l_rgb = cv2.cvtColor(img_l, cv2.COLOR_BGR2RGB)
+            img_d_rgb = cv2.cvtColor(img_d, cv2.COLOR_BGR2RGB)
+            axs[0].imshow(img_l_rgb)
+            axs[0].set_title('Left Image (click here or right)')
+            axs[1].imshow(img_d_rgb)
+            axs[1].set_title('Right Image (click here or left)')
+            plt.tight_layout()
+            print("Click a point in either image (left or right). Close the window to exit.")
+            while True:
+                pts = plt.ginput(1, timeout=0)
+                if not pts:
+                    break
+                x, y = pts[0]
+                w = img_l.shape[1]
+                if x < w:
+                    # Clicked in left image
+                    x_img, y_img = x, y
+                    axs[0].scatter(x_img, y_img, color='red', s=60)
+                    p = np.array([x_img, y_img, 1])
+                    p_norm = np.linalg.inv(K) @ p
+                    l = E @ p_norm  # Epipolar line in right normalized coords
+                    l_pix = np.linalg.inv(K).T @ l
+                    print(f"[E] Epipolar line in RIGHT image (pixels) for point ({x_img:.2f}, {y_img:.2f}) in LEFT: a={l_pix[0]:.6f}, b={l_pix[1]:.6f}, c={l_pix[2]:.6f}")
+                    draw_line(axs[1], l_pix, img_d.shape, color='m')
+                    axs[1].set_title('Right Image (epipolar line from E)')
+                else:
+                    # Clicked in right image
+                    x_img, y_img = x - w, y
+                    axs[1].scatter(x_img, y_img, color='blue', s=60)
+                    p = np.array([x_img, y_img, 1])
+                    p_norm = np.linalg.inv(K) @ p
+                    l = E.T @ p_norm  # Epipolar line in left normalized coords
+                    l_pix = np.linalg.inv(K).T @ l
+                    print(f"[E] Epipolar line in LEFT image (pixels) for point ({x_img:.2f}, {y_img:.2f}) in RIGHT: a={l_pix[0]:.6f}, b={l_pix[1]:.6f}, c={l_pix[2]:.6f}")
+                    draw_line(axs[0], l_pix, img_l.shape, color='m')
+                    axs[0].set_title('Left Image (epipolar line from E)')
+                plt.draw()
+            plt.close(fig)
+            print("Interactive epipolar view (E) closed.")
             return "Interactive epipolar view with E finished."
 
         def caso_10():
             nonlocal img_l, img_d
-            # Compute disparity map
-            disparity_map = compute_disparity_map(
-                img_l, 
-                img_d,
-                max_disparity=100,  # Adjust based on your needs
-                kernel_size=5,      # Adjust based on your needs
-                use_subpixel=True
-            )
+            print("Choose disparity computation method:")
+            print("1. StereoBM (faster, good for textured scenes)")
+            print("2. StereoSGBM (slower, better quality)")
+            method_choice = input("Enter choice (1-2): ")
+            
+            print("Choose quality preset:")
+            print("1. Fast (lower quality, faster)")
+            print("2. Medium (balanced)")
+            print("3. High (better quality, slower)")
+            quality_choice = input("Enter choice (1-3): ")
+            
+            method = 'BM' if method_choice == "1" else 'SGBM'
+            quality_map = {'1': 'fast', '2': 'medium', '3': 'high'}
+            quality = quality_map.get(quality_choice, 'medium')
+            
+            print(f"Using {method} with {quality} quality preset...")
+            
+            # Get optimized parameters
+            params = get_stereo_params(method, quality)
+            
+            # Compute disparity map using OpenCV
+            disparity_map = compute_disparity_map_opencv(img_l, img_d, method=method, **params)
             
             # Visualize results
-            visualize_disparity(disparity_map, "Computed Disparity Map")
+            visualize_disparity(disparity_map, f"Disparity Map ({method} - {quality} quality)")
             
-            return "Disparity map computation completed."
+            return f"Disparity map computation completed using OpenCV {method} ({quality} quality)."
 
         def caso_11():
             nonlocal F, E, K, puntos_l, puntos_d, E_computed
@@ -1051,6 +1227,72 @@ def main():
             nonlocal img_l, img_d, puntos
             plot_inlier_matches(img_l, img_d, puntos)
             return "Plotted inlier matches after RANSAC."
+
+        def caso_14():
+            """
+            Visualize epipolar lines in the left image
+            """
+            nonlocal img_l, img_d, F, puntos_l, puntos_d
+            if F is None or puntos_l is None or puntos_d is None or len(puntos_l) < 8:
+                print("You must run RANSAC (option 6) first and have enough correspondences.")
+                return "Aborted: F or correspondences not available."
+            
+            print("Plotting epipolar lines in the left image...")
+            
+            # Select a subset of points to avoid clutter
+            num_lines = min(10, len(puntos_d))
+            indices = np.random.choice(len(puntos_d), num_lines, replace=False)
+            
+            # Create visualization
+            fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+            img_l_rgb = cv2.cvtColor(img_l, cv2.COLOR_BGR2RGB)
+            ax.imshow(img_l_rgb)
+            ax.set_title('Left Image with Epipolar Lines')
+            
+            h, w = img_l.shape[:2]
+            colors = plt.cm.rainbow(np.linspace(0, 1, num_lines))
+            
+            for i, idx in enumerate(indices):
+                # Point in right image
+                x2, y2 = puntos_d[idx]
+                # Corresponding point in left image
+                x1, y1 = puntos_l[idx]
+                
+                # Compute epipolar line in left image
+                p2 = np.array([x2, y2, 1])
+                l1 = F.T @ p2  # Epipolar line in left image
+                
+                # Draw the epipolar line
+                if abs(l1[1]) > 1e-6:
+                    x_line = np.array([0, w])
+                    y_line = -(l1[0] * x_line + l1[2]) / l1[1]
+                else:
+                    y_line = np.array([0, h])
+                    x_line = -(l1[1] * y_line + l1[2]) / l1[0]
+                
+                # Plot line and point
+                ax.plot(x_line, y_line, color=colors[i], linewidth=2, alpha=0.7, 
+                       label=f'Line {i+1}' if i < 5 else '')
+                ax.plot(x1, y1, 'o', color=colors[i], markersize=8, markeredgecolor='white', 
+                       markeredgewidth=2)
+                
+                # Add text annotation for the first few points
+                if i < 5:
+                    ax.annotate(f'P{i+1}({x1:.0f},{y1:.0f})', 
+                              (x1, y1), xytext=(5, 5), textcoords='offset points',
+                              fontsize=8, color='white', weight='bold',
+                              bbox=dict(boxstyle='round,pad=0.3', facecolor=colors[i], alpha=0.7))
+            
+            ax.legend(loc='upper right')
+            ax.axis('off')
+            plt.tight_layout()
+            plt.show()
+            
+            print(f"Displayed {num_lines} epipolar lines in the left image.")
+            print("Each line corresponds to a point in the right image.")
+            print("The colored dots show the actual corresponding points in the left image.")
+            
+            return "Epipolar lines visualization in left image completed."
 
         def caso_16():
             nonlocal puntos_clave_l, puntos_clave_d, F, HL, HD
@@ -1174,49 +1416,76 @@ def main():
 
         def caso_20():
             """
-            Reconstruct 3D scene from stereo images.
+            Reconstruct 3D scene from stereo images using OpenCV.
             """
-            nonlocal img_l_rect, img_d_rect, K
+            nonlocal img_l, img_d, K
             
             # Check if we have the camera matrix
             if K is None:
                 print("ERROR: Camera matrix K is not available. Run camera calibration first.")
                 return "Aborted: No camera matrix available."
             
-            # Compute disparity map
+            print("Choose disparity computation method:")
+            print("1. StereoBM (faster, good for textured scenes)")
+            print("2. StereoSGBM (slower, better quality)")
+            method_choice = input("Enter choice (1-2): ")
+            
+            print("Choose quality preset:")
+            print("1. Fast (lower quality, faster)")
+            print("2. Medium (balanced)")
+            print("3. High (better quality, slower)")
+            quality_choice = input("Enter choice (1-3): ")
+            
+            method = 'BM' if method_choice == "1" else 'SGBM'
+            quality_map = {'1': 'fast', '2': 'medium', '3': 'high'}
+            quality = quality_map.get(quality_choice, 'medium')
+            
+            print(f"Using {method} with {quality} quality preset...")
+            
+            # Get optimized parameters
+            params = get_stereo_params(method, quality)
+            
+            # Compute disparity map using OpenCV
             print("Computing disparity map...")
-            disparity_map = compute_disparity_map(
-                img_l, 
-                img_d,
-                max_disparity=64,
-                kernel_size=5,
-                use_subpixel=True
-            )
+            disparity_map = compute_disparity_map_opencv(img_l, img_d, method=method, **params)
             
             # Get baseline from user
             baseline = float(input("Enter baseline distance (in mm): "))
             
-            # Reconstruct 3D points
+            # Create reprojection matrix
+            Q_matrix = create_reprojection_matrix(K, baseline)
+            
+            # Reconstruct 3D points using OpenCV
             print("Reconstructing 3D points...")
-            points_3d, colors = reconstruct_3d(disparity_map, K, baseline, img_l)
+            points_3d_full = reconstruct_3d_opencv(disparity_map, Q_matrix)
+            
+            # Extract valid points and colors
+            valid_points, colors = extract_valid_points_and_colors(
+                points_3d_full, img_l, disparity_map, depth_threshold=2000
+            )
             
             # Ask user what to do with the point cloud
             print("\nWhat would you like to do with the point cloud?")
             print("1. Visualize")
             print("2. Save to PLY file")
             print("3. Both")
-            choice = input("Enter your choice (1-3): ")
+            print("4. Show disparity map first")
+            choice = input("Enter your choice (1-4): ")
+            
+            if choice in ['4']:
+                visualize_disparity(disparity_map, f"Disparity Map ({method} - {quality} quality)")
+                choice = input("Now choose (1-3): ")
             
             if choice in ['1', '3']:
                 print("Visualizing point cloud...")
-                visualize_point_cloud(points_3d, colors)
+                visualize_point_cloud(valid_points, colors)
             
             if choice in ['2', '3']:
                 filename = input("Enter filename for PLY file (e.g., pointcloud.ply): ")
                 print(f"Saving point cloud to {filename}...")
-                save_point_cloud(points_3d, colors, filename)
+                save_point_cloud(valid_points, colors, filename)
             
-            return "3D reconstruction completed."
+            return f"3D reconstruction completed using OpenCV {method} ({quality} quality)."
 
         switch = {
             "0": caso_0,
@@ -1233,6 +1502,7 @@ def main():
             "11": caso_11,
             "12": caso_12,
             "13": caso_13,
+            "14": caso_14,
             "16": caso_16,
             "17": caso_17,
             "20": caso_20

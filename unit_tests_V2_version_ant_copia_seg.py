@@ -1005,8 +1005,8 @@ def compute_average_pose(rvecs, tvecs):
 
 def main():
     global RANSAC_THRESHOLD
-    img_l = cv2.imread('cones/disp6.png', cv2.IMREAD_COLOR)
-    img_d = cv2.imread('cones/disp2.png', cv2.IMREAD_COLOR)
+    img_l = cv2.imread('img_i.png', cv2.IMREAD_COLOR)
+    img_d = cv2.imread('img_d.png', cv2.IMREAD_COLOR)
     flag = True
 
     # Calibration data

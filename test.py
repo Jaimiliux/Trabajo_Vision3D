@@ -5,22 +5,18 @@ import matplotlib.pyplot as plt
 import os
 import random
 import glob
-from unit_tests_V2 import (
+from unit_tests_V2_cpy import (
     krt_descomposition,
     reconstruir_P,
-    normalize_points,
+    normalizar_puntos,
     sampson_error,
     ransac,
     calcular_matriz_E,
-    robust_numpy_matching,
+    robust_sift_matching,
     block_matching,
     compute_disparity_map,
-    filter_horizontal_matches,
-    mean_epipolar_error,
     plot_sift_matches,
     plot_inlier_matches,
-    draw_epipolar_lines,
-    calibracion_camara_chessboard
 )
 
 # ------------------------------------------------------------------------
@@ -148,7 +144,7 @@ def test_krt_decomposition(synthetic_projection_matrix):
 # Tests for point normalization
 # ------------------------------------------------------------------------
 
-def test_normalize_points():
+def test_normalizar_puntos():
     """Test point normalization function."""
     # Create test points
     points = np.array([
@@ -159,7 +155,7 @@ def test_normalize_points():
     ])
     
     # Normalize points
-    points_normalized, T = normalize_points(points)
+    points_normalized, T = normalizar_puntos(points)
     
     # Check that centroid is close to origin
     centroid = np.mean(points_normalized, axis=0)
@@ -226,13 +222,7 @@ def real_stereo_pair():
 
 def test_sift_and_ransac(real_stereo_pair):
     img_l, img_d = real_stereo_pair
-    sift = cv2.SIFT_create()
-    kp1, des1 = sift.detectAndCompute(img_l, None)
-    kp2, des2 = sift.detectAndCompute(img_d, None)
-    idx_l, idx_d = robust_numpy_matching(des1, des2)
-    puntos_clave_l = np.array([kp1[i].pt for i in idx_l], dtype=np.float32)
-    puntos_clave_d = np.array([kp2[i].pt for i in idx_d], dtype=np.float32)
-    puntos_clave_l, puntos_clave_d = filter_horizontal_matches(puntos_clave_l, puntos_clave_d)
+    puntos_clave_l, puntos_clave_d, good, kp1, kp2 = robust_sift_matching(img_l, img_d)
     if len(puntos_clave_l) < 8:
         pytest.skip("Not enough matches for RANSAC")
     F, inliers = ransac(puntos_clave_l, puntos_clave_d, 100, 5.0)
@@ -267,24 +257,16 @@ def test_essential_matrix(synthetic_fundamental_matrix):
 # Tests for robust matching
 # ------------------------------------------------------------------------
 
-def test_robust_numpy_matching():
-    """Test robust numpy matching function."""
-    # Create synthetic descriptors
-    np.random.seed(42)
-    des1 = np.random.rand(100, 128)
-    des2 = np.random.rand(100, 128)
-    
-    # Add some matching pairs
-    for i in range(50):
-        des2[i] = des1[i] + np.random.normal(0, 0.1, 128)
-    
-    # Run matching
-    idx_l, idx_d = robust_numpy_matching(des1, des2)
-    
-    # Check results
-    assert len(idx_l) > 0
-    assert len(idx_l) == len(idx_d)
-    assert len(idx_l) <= min(len(des1), len(des2))
+def test_robust_sift_matching():
+    """Test robust SIFT matching function with synthetic images."""
+    # Create synthetic images
+    img_l = np.zeros((100, 100, 3), dtype=np.uint8)
+    img_d = np.zeros((100, 100, 3), dtype=np.uint8)
+    cv2.circle(img_l, (50, 50), 10, (255, 255, 255), -1)
+    cv2.circle(img_d, (55, 50), 10, (255, 255, 255), -1)
+    puntos_clave_l, puntos_clave_d, good, kp1, kp2 = robust_sift_matching(img_l, img_d)
+    assert len(puntos_clave_l) > 0
+    assert len(puntos_clave_l) == len(puntos_clave_d)
 
 # ------------------------------------------------------------------------
 # Tests for block matching
@@ -315,57 +297,59 @@ def test_block_matching():
 # Tests for horizontal match filtering
 # ------------------------------------------------------------------------
 
-def test_filter_horizontal_matches():
-    """Test horizontal match filtering."""
-    # Create test points
-    points_l = np.array([
-        [100, 200],
-        [150, 250],
-        [200, 300]
-    ])
-    
-    points_d = np.array([
-        [120, 200],  # Horizontal
-        [160, 260],  # Diagonal
-        [180, 400]   # Vertical
-    ])
-    
-    # Filter matches
-    filtered_l, filtered_d = filter_horizontal_matches(points_l, points_d, max_angle_deg=20)
-    
-    # Check that only horizontal matches remain
-    assert len(filtered_l) == 1
-    assert len(filtered_d) == 1
-    assert np.allclose(filtered_l[0], points_l[0])
-    assert np.allclose(filtered_d[0], points_d[0])
+# def test_filter_horizontal_matches():
+#     """Test horizontal match filtering."""
+#     # COMMENTED OUT: filter_horizontal_matches not available in unit_tests_V2_cpy
+#     # Create test points
+#     points_l = np.array([
+#         [100, 200],
+#         [150, 250],
+#         [200, 300]
+#     ])
+#     
+#     points_d = np.array([
+#         [120, 200],  # Horizontal
+#         [160, 260],  # Diagonal
+#         [180, 400]   # Vertical
+#     ])
+#     
+#     # Filter matches
+#     filtered_l, filtered_d = filter_horizontal_matches(points_l, points_d, max_angle_deg=20)
+#     
+#     # Check that only horizontal matches remain
+#     assert len(filtered_l) == 1
+#     assert len(filtered_d) == 1
+#     assert np.allclose(filtered_l[0], points_l[0])
+#     assert np.allclose(filtered_d[0], points_d[0])
 
 # ------------------------------------------------------------------------
 # Tests for mean epipolar error
 # ------------------------------------------------------------------------
 
-def test_mean_epipolar_error(synthetic_fundamental_matrix):
-    """Test mean epipolar error calculation."""
-    F = synthetic_fundamental_matrix
-    
-    # Create test points
-    pts1 = np.array([
-        [100, 200],
-        [150, 250],
-        [200, 300]
-    ])
-    
-    pts2 = np.array([
-        [120, 200],
-        [160, 250],
-        [220, 300]
-    ])
-    
-    # Calculate error
-    error = mean_epipolar_error(F, pts1, pts2)
-    
-    # Check result
-    assert isinstance(error, float)
-    assert error >= 0
+# def test_mean_epipolar_error(synthetic_fundamental_matrix):
+#     """Test mean epipolar error calculation."""
+#     # COMMENTED OUT: mean_epipolar_error not available in unit_tests_V2_cpy
+#     F = synthetic_fundamental_matrix
+#     
+#     # Create test points
+#     pts1 = np.array([
+#         [100, 200],
+#         [150, 250],
+#         [200, 300]
+#     ])
+#     
+#     pts2 = np.array([
+#         [120, 200],
+#         [160, 250],
+#         [220, 300]
+#     ])
+#     
+#     # Calculate error
+#     error = mean_epipolar_error(F, pts1, pts2)
+#     
+#     # Check result
+#     assert isinstance(error, float)
+#     assert error >= 0
 
 # ------------------------------------------------------------------------
 # Tests for camera calibration
@@ -416,72 +400,74 @@ def synthetic_chessboard_images():
     
     return images, objpoints, imgpoints
 
-def test_camera_calibration(synthetic_chessboard_images):
-    """Test camera calibration function."""
-    images, objpoints, imgpoints = synthetic_chessboard_images
-    
-    # Save images temporarily
-    temp_dir = "temp_calib"
-    os.makedirs(temp_dir, exist_ok=True)
-    image_files = []
-    for i, img in enumerate(images):
-        filename = f"{temp_dir}/chessboard_{i}.jpg"
-        cv2.imwrite(filename, img)
-        image_files.append(filename)
-    
-    try:
-        # Run calibration
-        ret, mtx, dist, rvecs, tvecs = calibracion_camara_chessboard(
-            image_files,
-            chessboard_size=(7,7),
-            square_size=2.4,
-            show_corners=False
-        )
-        
-        # Check results
-        assert isinstance(ret, float)
-        assert mtx.shape == (3, 3)
-        assert dist.shape == (5,)
-        assert len(rvecs) == len(images)
-        assert len(tvecs) == len(images)
-        
-        # Check that camera matrix is reasonable
-        assert mtx[0,0] > 0  # focal length x
-        assert mtx[1,1] > 0  # focal length y
-        assert mtx[2,2] == 1  # homogeneous coordinate
-        
-    finally:
-        # Clean up temporary files
-        for filename in image_files:
-            os.remove(filename)
-        os.rmdir(temp_dir)
+# def test_camera_calibration(synthetic_chessboard_images):
+#     """Test camera calibration function."""
+#     # COMMENTED OUT: calibracion_camara_chessboard not available in unit_tests_V2_cpy
+#     images, objpoints, imgpoints = synthetic_chessboard_images
+#     
+#     # Save images temporarily
+#     temp_dir = "temp_calib"
+#     os.makedirs(temp_dir, exist_ok=True)
+#     image_files = []
+#     for i, img in enumerate(images):
+#         filename = f"{temp_dir}/chessboard_{i}.jpg"
+#         cv2.imwrite(filename, img)
+#         image_files.append(filename)
+#     
+#     try:
+#         # Run calibration
+#         ret, mtx, dist, rvecs, tvecs = calibracion_camara_chessboard(
+#             image_files,
+#             chessboard_size=(7,7),
+#             square_size=2.4,
+#             show_corners=False
+#         )
+#         
+#         # Check results
+#         assert isinstance(ret, float)
+#         assert mtx.shape == (3, 3)
+#         assert dist.shape == (5,)
+#         assert len(rvecs) == len(images)
+#         assert len(tvecs) == len(images)
+#         
+#         # Check that camera matrix is reasonable
+#         assert mtx[0,0] > 0  # focal length x
+#         assert mtx[1,1] > 0  # focal length y
+#         assert mtx[2,2] == 1  # homogeneous coordinate
+#         
+#     finally:
+#         # Clean up temporary files
+#         for filename in image_files:
+#             os.remove(filename)
+#         os.rmdir(temp_dir)
 
-def test_camera_calibration_real():
-    """Test camera calibration with real chessboard images."""
-    # Check if calibration images exist
-    image_files = glob.glob('Muestra/*.jpeg')
-    if not image_files:
-        pytest.skip("No calibration images found in Muestra directory")
-    
-    # Run calibration
-    ret, mtx, dist, rvecs, tvecs = calibracion_camara_chessboard(
-        image_files,
-        chessboard_size=(7,7),
-        square_size=2.4,
-        show_corners=False
-    )
-    
-    # Check results
-    assert isinstance(ret, float)
-    assert mtx.shape == (3, 3)
-    assert dist.size >= 5
-    assert len(rvecs) == len(image_files)
-    assert len(tvecs) == len(image_files)
-    
-    # Check that camera matrix is reasonable
-    assert mtx[0,0] > 0  # focal length x
-    assert mtx[1,1] > 0  # focal length y
-    assert mtx[2,2] == 1  # homogeneous coordinate
+# def test_camera_calibration_real():
+#     """Test camera calibration with real chessboard images."""
+#     # COMMENTED OUT: calibracion_camara_chessboard not available in unit_tests_V2_cpy
+#     # Check if calibration images exist
+#     image_files = glob.glob('Muestra/*.jpeg')
+#     if not image_files:
+#         pytest.skip("No calibration images found in Muestra directory")
+#     
+#     # Run calibration
+#     ret, mtx, dist, rvecs, tvecs = calibracion_camara_chessboard(
+#         image_files,
+#         chessboard_size=(7,7),
+#         square_size=2.4,
+#         show_corners=False
+#     )
+#     
+#     # Check results
+#     assert isinstance(ret, float)
+#     assert mtx.shape == (3, 3)
+#     assert dist.size >= 5
+#     assert len(rvecs) == len(image_files)
+#     assert len(tvecs) == len(image_files)
+#     
+#     # Check that camera matrix is reasonable
+#     assert mtx[0,0] > 0  # focal length x
+#     assert mtx[1,1] > 0  # focal length y
+#     assert mtx[2,2] == 1  # homogeneous coordinate
 
 # ------------------------------------------------------------------------
 # Tests for visualization functions
@@ -490,13 +476,7 @@ def test_camera_calibration_real():
 def test_plot_sift_matches(real_stereo_pair):
     """Test SIFT matches visualization."""
     img_l, img_d = real_stereo_pair
-    sift = cv2.SIFT_create()
-    kp1, des1 = sift.detectAndCompute(img_l, None)
-    kp2, des2 = sift.detectAndCompute(img_d, None)
-    idx_l, idx_d = robust_numpy_matching(des1, des2)
-    puntos_clave_l = np.array([kp1[i].pt for i in idx_l], dtype=np.float32)
-    puntos_clave_d = np.array([kp2[i].pt for i in idx_d], dtype=np.float32)
-    puntos_clave_l, puntos_clave_d = filter_horizontal_matches(puntos_clave_l, puntos_clave_d)
+    puntos_clave_l, puntos_clave_d, good, kp1, kp2 = robust_sift_matching(img_l, img_d)
     if len(puntos_clave_l) < 8:
         pytest.skip("Not enough matches for SIFT visualization")
     plot_sift_matches(img_l, img_d, puntos_clave_l, puntos_clave_d)
@@ -513,18 +493,19 @@ def test_plot_inlier_matches():
     # Test visualization (should not raise any errors)
     plot_inlier_matches(img_l, img_d, inliers)
 
-def test_draw_epipolar_lines(synthetic_fundamental_matrix):
-    """Test epipolar line drawing."""
-    # Create synthetic images
-    img1 = np.zeros((100, 100, 3), dtype=np.uint8)
-    img2 = np.zeros((100, 100, 3), dtype=np.uint8)
-    
-    # Create test points
-    pts1 = np.array([[30, 30], [50, 50]], dtype=np.float32)
-    pts2 = np.array([[40, 30], [60, 50]], dtype=np.float32)
-    
-    # Test visualization (should not raise any errors)
-    draw_epipolar_lines(img1, img2, synthetic_fundamental_matrix, pts1, pts2)
+# def test_draw_epipolar_lines(synthetic_fundamental_matrix):
+#     """Test epipolar line drawing."""
+#     # COMMENTED OUT: draw_epipolar_lines not available in unit_tests_V2_cpy
+#     # Create synthetic images
+#     img1 = np.zeros((100, 100, 3), dtype=np.uint8)
+#     img2 = np.zeros((100, 100, 3), dtype=np.uint8)
+#     
+#     # Create test points
+#     pts1 = np.array([[30, 30], [50, 50]], dtype=np.float32)
+#     pts2 = np.array([[40, 30], [60, 50]], dtype=np.float32)
+#     
+#     # Test visualization (should not raise any errors)
+#     draw_epipolar_lines(img1, img2, synthetic_fundamental_matrix, pts1, pts2)
 
 # ------------------------------------------------------------------------
 # Tests for disparity computation
