@@ -103,29 +103,7 @@ def normalizar_puntos(puntos):
     puntos_homogeneos = np.hstack((puntos, np.ones((puntos.shape[0], 1))))
     puntos_normalizados = (T @ puntos_homogeneos.T).T
     return puntos_normalizados[:, :2], T
-'''
-def estima_error(puntos_l, puntos_d, M):
-    # Convertimos los puntos a coordenadas homogéneas
-    puntos_l_h = np.hstack((puntos_l, np.ones((puntos_l.shape[0], 1))))
-    puntos_d_h = np.hstack((puntos_d, np.ones((puntos_d.shape[0], 1))))
 
-    # Multiplicamos correctamente con la matriz fundamental
-    recta_l = M.T @ puntos_d_h.T  # (3x3) @ (3xN) → (3xN)
-    recta_d = M @ puntos_l_h.T    # (3x3) @ (3xN) → (3xN)
-
-    # Normalización de líneas epipolares
-    recta_l = recta_l / np.linalg.norm(recta_l[:2], axis=0)
-    recta_d = recta_d / np.linalg.norm(recta_d[:2], axis=0)
-
-    # Calculamos la distancia punto-línea epipolar
-    dpd_l = np.abs(np.sum(recta_l.T * puntos_l_h, axis=1)) #PREGUNTAR COMO VA ESTO DE DPd
-    dpd_d = np.abs(np.sum(recta_d.T * puntos_d_h, axis=1))
-
-    # Error epipolar total
-    epsilon = np.mean(dpd_l + dpd_d)
-    #print(epsilon)
-    return epsilon
-'''
 def sampson_error(F, x1, x2):
     """
     Calcula el error de Sampson para cada correspondencia.
@@ -272,27 +250,7 @@ def ransac(puntos_clave_l, puntos_clave_d, iter, t):
                 max_inliers = inliers
                 print(f"max_inliers = {max_inliers}")
     print(f"Total inliers found: {max_inliers} (threshold t={t})")
-    #Filtrar luego para quedarse con las rectas con la orientación mas similar / común
-    print("C_est =")
-    print(C_est_np)
-    print("F_est =")
-    print(F_est)
-    print("Terminamos RANSAC")
-    if len(C_est_np) >= 8:
-        # Extrae los puntos inliers correctamente
-        puntos_l_inliers = np.array([p[0] for p in C_est_np])  # (x1, y1)
-        puntos_d_inliers = np.array([p[1] for p in C_est_np])  # (x2, y2)
-        # Normaliza
-        puntos_l_norm, T1 = normalizar_puntos(puntos_l_inliers)
-        puntos_d_norm, T2 = normalizar_puntos(puntos_d_inliers)
-        # Calcula F con todos los inliers
-        F_final = eight_point_algorithm(puntos_l_norm, puntos_d_norm, T1, T2)
-        puntos_l_list, puntos_d_list = zip(*C_est_np)
-        puntos_l = np.vstack(puntos_l_list)
-        puntos_d = np.vstack(puntos_d_list)
-        return F_final, C_est_np
-    else:
-        return F_est, C_est_np
+    return F_est, C_est_np
 
 def angle_bin(v, num_bins=36):
         angle = np.arctan2(v[1], v[0])
@@ -410,11 +368,11 @@ def visualizar_epipolar_validation(img_l, img_d, F, puntos_l, puntos_d, E=None, 
     # Show side-by-side comparison with horizontal lines
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
     
-    ax1.imshow(cv2.cvtColor(img_l_rectified, cv2.COLOR_BGR2RGB))
+    ax1.imshow(cv2.cvtColor(img_l, cv2.COLOR_BGR2RGB))
     ax1.set_title('Rectified Left Image')
     ax1.axis('off')
     
-    ax2.imshow(cv2.cvtColor(img_d_rectified, cv2.COLOR_BGR2RGB))
+    ax2.imshow(cv2.cvtColor(img_d, cv2.COLOR_BGR2RGB))
     ax2.set_title('Rectified Right Image')
     ax2.axis('off')
     
@@ -426,7 +384,7 @@ def visualizar_epipolar_validation(img_l, img_d, F, puntos_l, puntos_d, E=None, 
     plt.tight_layout()
     plt.show()
     
-    return img_l_rectified, img_d_rectified
+    return img_l, img_d
 
 def robust_sift_matching(img_l, img_d, ratio_thresh=0.75):
 
@@ -1072,7 +1030,7 @@ def main():
         def caso_8():
             nonlocal img_l, img_d, F
             if F is None:
-                print("You must run RANSAC (option 22) first.")
+                print("You must run RANSAC (option 6) first.")
                 return "Aborted: F not available."
             def draw_line(ax, line, shape, color='g'):
                 a, b, c = line

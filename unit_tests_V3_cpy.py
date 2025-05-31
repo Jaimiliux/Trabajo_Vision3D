@@ -346,70 +346,92 @@ def check_matrix_properties(F, E, K, puntos_l, puntos_d):
     print(f"Epipolar constraint errors (first 5 points): {errors}")
     print(f"Mean epipolar error: {np.mean(np.abs(errors))}")
 
-def visualizar_epipolar_validation(img_l, img_d, F, puntos_l, puntos_d, E=None, K=None, num_points=5):
+def line_to_points(l, img_shape):
+    """Convert line ax + by + c = 0 to two image-bound points."""
+    a, b, c = l
+    h, w = img_shape[:2]
+    points = []
+
+    for x in [0, w]:
+        if abs(b) > 1e-6:
+            y = -(a * x + c) / b
+            if 0 <= y < h:
+                points.append((x, y))
+
+    for y in [0, h]:
+        if abs(a) > 1e-6:
+            x = -(b * y + c) / a
+            if 0 <= x < w:
+                points.append((x, y))
+
+    if len(points) >= 2:
+        return points[:2]
+    return None
+
+# Improved interactive_epipolar_view to work only with inliers and properly
+# draw consistent epipolar lines using the Fundamental Matrix F
+
+def interactive_epipolar_view(img_l, img_d, F):
     """
-    Visualize epipolar lines for validation (both F and E if provided)
+    Interactive function: user clicks a point in the left image,
+    and the corresponding epipolar line is drawn in the right image.
     """
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7))
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import cv2
+
+    def line_to_points(l, shape):
+        """
+        Convert line l=[a, b, c] to two points clipped to image dimensions
+        """
+        a, b, c = l
+        h, w = shape[:2]
+        points = []
+        if abs(b) > 1e-6:
+            for x in [0, w]:
+                y = int(round((-a * x - c) / b))
+                if 0 <= y <= h:
+                    points.append((x, y))
+        if abs(a) > 1e-6:
+            for y in [0, h]:
+                x = int(round((-b * y - c) / a))
+                if 0 <= x <= w:
+                    points.append((x, y))
+        if len(points) >= 2:
+            return points[:2]
+        return [(0, 0), (w, h)]  # fallback
+
+    fig, axs = plt.subplots(1, 2, figsize=(15, 7))
     img_l_rgb = cv2.cvtColor(img_l, cv2.COLOR_BGR2RGB)
     img_d_rgb = cv2.cvtColor(img_d, cv2.COLOR_BGR2RGB)
-    ax1.imshow(img_l_rgb)
-    ax2.imshow(img_d_rgb)
-    for i in range(min(num_points, len(puntos_l))):
-        x1, y1 = puntos_l[i]
-        x2, y2 = puntos_d[i]
-        p1 = np.array([x1, y1, 1])
-        p2 = np.array([x2, y2, 1])
-        # F-based lines
-        l2 = F @ p1
-        l1 = F.T @ p2
-        # Plot points
-        ax1.plot(x1, y1, 'ro', markersize=5)
-        ax2.plot(x2, y2, 'bo', markersize=5)
-        h, w = img_l.shape[:2]
-        # F lines
-        if abs(l1[1]) > 1e-6:
-            y1_line = np.array([0, h])
-            x1_line = -(l1[1] * y1_line + l1[2]) / l1[0]
-        else:
-            x1_line = np.array([0, w])
-            y1_line = -(l1[0] * x1_line + l1[2]) / l1[1]
-        ax1.plot(x1_line, y1_line, 'g-', linewidth=1, label='F')
-        if abs(l2[1]) > 1e-6:
-            y2_line = np.array([0, h])
-            x2_line = -(l2[1] * y2_line + l2[2]) / l2[0]
-        else:
-            x2_line = np.array([0, w])
-            y2_line = -(l2[0] * x2_line + l2[2]) / l2[1]
-        ax2.plot(x2_line, y2_line, 'g-', linewidth=1, label='F')
-        # E-based lines (if E and K provided)
-        if E is not None and K is not None:
-            # Left image: line from right point
-            p2_norm = np.linalg.inv(K) @ p2
-            l1_E = E.T @ p2_norm
-            l1_E_pix = np.linalg.inv(K).T @ l1_E
-            if abs(l1_E_pix[1]) > 1e-6:
-                y1e = np.array([0, h])
-                x1e = -(l1_E_pix[1] * y1e + l1_E_pix[2]) / l1_E_pix[0]
-            else:
-                x1e = np.array([0, w])
-                y1e = -(l1_E_pix[0] * x1e + l1_E_pix[2]) / l1_E_pix[1]
-            ax1.plot(x1e, y1e, 'm--', linewidth=1, label='E')
-            # Right image: line from left point
-            p1_norm = np.linalg.inv(K) @ p1
-            l2_E = E @ p1_norm
-            l2_E_pix = np.linalg.inv(K).T @ l2_E
-            if abs(l2_E_pix[1]) > 1e-6:
-                y2e = np.array([0, h])
-                x2e = -(l2_E_pix[1] * y2e + l2_E_pix[2]) / l2_E_pix[0]
-            else:
-                x2e = np.array([0, w])
-                y2e = -(l2_E_pix[0] * x2e + l2_E_pix[2]) / l2_E_pix[1]
-            ax2.plot(x2e, y2e, 'm--', linewidth=1, label='E')
-    ax1.set_title('Left Image with Epipolar Lines')
-    ax2.set_title('Right Image with Epipolar Lines')
+    axs[0].imshow(img_l_rgb)
+    axs[0].set_title('Left Image (click here)')
+    axs[1].imshow(img_d_rgb)
+    axs[1].set_title('Right Image')
+    axs[0].axis("off")
+    axs[1].axis("off")
     plt.tight_layout()
-    plt.show()
+
+    print("Click a point in the left image. Close the window to exit.")
+    while True:
+        pts = plt.ginput(1, timeout=0)
+        if not pts:
+            break
+        x, y = pts[0]
+        h, w = img_l.shape[:2]
+        if 0 <= x < w and 0 <= y < h:
+            axs[0].scatter(x, y, color='red', s=60)
+            p = np.array([x, y, 1])
+            l = F @ p  # line in right image
+            pt1, pt2 = line_to_points(l, img_d.shape)
+            axs[1].plot([pt1[0], pt2[0]], [pt1[1], pt2[1]], color='lime', linewidth=2)
+        plt.draw()
+
+    plt.close(fig)
+    print("Interactive epipolar view closed.")
+
+
+
 
 def robust_sift_matching(img_l, img_d, ratio_thresh=0.75):
     """
@@ -904,51 +926,6 @@ def visualize_point_cloud(points_3d, colors=None):
     plt.title('3D Point Cloud')
     plt.show()
 
-def caso_20():
-    """
-    Reconstruct 3D scene from stereo images.
-    """
-    global img_l, img_d, K
-    
-    # Check if we have the camera matrix
-    if K is None:
-        print("ERROR: Camera matrix K is not available. Run camera calibration first.")
-        return "Aborted: No camera matrix available."
-    
-    # Compute disparity map
-    print("Computing disparity map...")
-    disparity_map = compute_disparity_map(
-        img_l, 
-        img_d,
-        max_disparity=100,
-        kernel_size=5,
-        use_subpixel=True
-    )
-    
-    # Get baseline from user
-    baseline = float(input("Enter baseline distance (in mm): "))
-    
-    # Reconstruct 3D points
-    print("Reconstructing 3D points...")
-    points_3d, colors = reconstruct_3d(disparity_map, K, baseline, img_l)
-    
-    # Ask user what to do with the point cloud
-    print("\nWhat would you like to do with the point cloud?")
-    print("1. Visualize")
-    print("2. Save to PLY file")
-    print("3. Both")
-    choice = input("Enter your choice (1-3): ")
-    
-    if choice in ['1', '3']:
-        print("Visualizing point cloud...")
-        visualize_point_cloud(points_3d, colors)
-    
-    if choice in ['2', '3']:
-        filename = input("Enter filename for PLY file (e.g., pointcloud.ply): ")
-        print(f"Saving point cloud to {filename}...")
-        save_point_cloud(points_3d, colors, filename)
-    
-    return "3D reconstruction completed."
 
 def encontrar_mejor_punto(puntos_l, puntos_d):
     """
@@ -1026,8 +1003,8 @@ def apply_homographies_and_visualize(img_l, img_d, HL, HD):
 
 def main():
     global RANSAC_THRESHOLD
-    img_l = cv2.imread('cones/im2.png', cv2.IMREAD_COLOR)
-    img_d = cv2.imread('cones/im6.png', cv2.IMREAD_COLOR)
+    img_l = cv2.imread('im_i.png', cv2.IMREAD_COLOR)
+    img_d = cv2.imread('im_d.png', cv2.IMREAD_COLOR)
     flag = True
 
     img_l_rect = None
