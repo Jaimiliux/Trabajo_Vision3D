@@ -3,6 +3,60 @@ import cv2
 import matplotlib.pyplot as plt
 import sys
 import random
+import glob
+import os
+
+def calibracion_camara_chessboard(image_files, chessboard_size=(7,7), square_size=2.4, show_corners=True):
+    """
+    Calibrates the camera using a set of chessboard images.
+    Args:
+        image_files: List of file paths to chessboard images.
+        chessboard_size: Number of inner corners per chessboard row and column (cols, rows).
+                        For an 8x8 chessboard, use (7,7) as it has 7x7 inner corners.
+        square_size: Size of a square in your defined unit (e.g., millimeters).
+        show_corners: If True, shows detected corners for each image.
+    Returns:
+        ret: RMS re-projection error.
+        mtx: Camera matrix (intrinsics).
+        dist: Distortion coefficients.
+        rvecs: Rotation vectors.
+        tvecs: Translation vectors.
+    """
+    objp = np.zeros((chessboard_size[1]*chessboard_size[0], 3), np.float32)
+    objp[:,:2] = np.mgrid[0:chessboard_size[0], 0:chessboard_size[1]].T.reshape(-1,2)
+    objp *= square_size
+
+    objpoints = []
+    imgpoints = []
+    img_shape = None
+
+    for fname in image_files:
+        img = cv2.imread(fname)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        if img_shape is None:
+            img_shape = gray.shape[::-1]
+        ret, corners = cv2.findChessboardCorners(gray, chessboard_size, None)
+        if ret:
+            objpoints.append(objp)
+            corners2 = cv2.cornerSubPix(gray, corners, (11,11), (-1,-1),
+                                        criteria=(cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001))
+            imgpoints.append(corners2)
+            if show_corners:
+                cv2.drawChessboardCorners(img, chessboard_size, corners2, ret)
+                cv2.imwrite(f"corners_{fname}.png", img)  # Guarda la imagen
+        else:
+            print(f"Chessboard not found in {fname}")
+
+    if not objpoints or not imgpoints:
+        raise RuntimeError("No chessboard corners were detected in any image. Check your images and chessboard size.")
+
+    ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(
+        objpoints, imgpoints, img_shape, None, None
+    )
+    print("RMS re-projection error:", ret)
+    print("Camera matrix:\n", mtx)
+    print("Distortion coefficients:\n", dist)
+    return ret, mtx, dist, rvecs, tvecs
 
 def rq_decomposition_numpy(A):
     """
@@ -126,13 +180,18 @@ def estima_error(puntos_l, puntos_d, M):
     #print(epsilon)
     return epsilon
 '''
-def sampson_error(F, x1, x2):
+def sampson_error(F: np.ndarray, x1: np.ndarray, x2: np.ndarray) -> np.ndarray:
     """
     Calcula el error de Sampson para cada correspondencia.
     F: matriz fundamental (3x3)
-    x1, x2: puntos homogéneos (Nx3)
+    x1, x2: puntos en forma (N, 2) o (N, 3) si ya son homogéneos
     Retorna: error de Sampson (N,)
     """
+    if x1.shape[1] == 2:
+        x1 = np.hstack([x1, np.ones((x1.shape[0], 1))])
+    if x2.shape[1] == 2:
+        x2 = np.hstack([x2, np.ones((x2.shape[0], 1))])
+
     x1 = x1.T  # (3, N)
     x2 = x2.T  # (3, N)
     Fx1 = F @ x1
@@ -205,16 +264,8 @@ def ransac(puntos_clave_l, puntos_clave_d, iter, t):
         z = V[-1]
         F_vec = z
         F = np.reshape(F_vec, (3, 3)) 
-        #Normalizamos F
-        #F = F / F[2,2]
 
         Uf, Sf, Vtf = np.linalg.svd(F) #!!!Normalizar valores singulares
-        #tan_v = Sf[1]/Sf[0]
-        #cos_v = 1 / np.sqrt(1 + tan_v**2)
-        #sin_v = tan_v * cos_v
-
-        #Sf[0] = cos_v
-        #Sf[1] = sin_v
 
         Sf[-1] = 0  # anular el menor valor singular
         F_rank2 = Uf @ np.diagflat(Sf) @ Vtf
@@ -226,12 +277,7 @@ def ransac(puntos_clave_l, puntos_clave_d, iter, t):
     C_est = []
     C = []
     max_inliers = 0
-    best_error = np.inf
-
-    puntos_normalizados_l, T1 = normalizar_puntos(puntos_clave_l)
-    puntos_normalizados_d, T2 = normalizar_puntos(puntos_clave_d)
-    #puntos_normalizados_l = puntos_clave_l
-    #puntos_normalizados_d = puntos_clave_d
+    best_inliers_idx = np.array([])
 
     random.seed(4)
     print("Empezamos RANSAC")
@@ -241,48 +287,77 @@ def ransac(puntos_clave_l, puntos_clave_d, iter, t):
         assert N >= 8, "No hay suficientes puntos para RANSAC"
         idx = random.sample(range(N), 8)
 
-        sample_l_ = puntos_normalizados_l[idx]
-        sample_d_ = puntos_normalizados_d[idx]
+        sample_l_ = puntos_clave_l[idx]
+        sample_d_ = puntos_clave_d[idx]
 
-        #sample_l, T_1 = normalizar_puntos(sample_l_)
-        #sample_d, T_2 = normalizar_puntos(sample_d_)
+        sample_l, T_1 = normalizar_puntos(sample_l_)
+        sample_d, T_2 = normalizar_puntos(sample_d_)
 
-        F = eight_point_algorithm(sample_l_, sample_d_, T1, T2) #poner aqui dentro la normalizacion de puntos
-        inliers = 0
+        F = eight_point_algorithm(sample_l, sample_d, T_1, T_2) #poner aqui dentro la normalizacion de puntos
         C = []
         
-        for i, (pl_n, pd_n) in enumerate(zip(puntos_normalizados_l, puntos_normalizados_d)):
-            # Convertir a homogéneo (añadir 1)
-            pl_n_h = np.append(pl_n, 1)
-            pd_n_h = np.append(pd_n, 1)
-            # El error de Sampson espera arrays de Nx3
-            error = sampson_error(F, np.array([pl_n_h]), np.array([pd_n_h]))[0]
-            if error < t:
-                pl = tuple(map(float, puntos_clave_l[i]))
-                pd = tuple(map(float, puntos_clave_d[i]))
-                C.append((pl, pd))
-                inliers += 1
+        error = sampson_error(F, puntos_clave_l, puntos_clave_d)
+        inliers = error < t
+        C = [(tuple(p1), tuple(p2)) for p1, p2, valido in zip(puntos_clave_l, puntos_clave_d, inliers) if valido]
+        inliers_idx = np.where(inliers)[0]
 
-        if len(C) > len(C_est) and inliers > max_inliers:
-        #if len(C) > len(C_est):
-            #print("Mejor error hasta el momento:", error)
-            #best_error = error
-            #C_est = np.array(C)
-            #C_est_np = (np.array(C_est, dtype=object)).copy()
-            C_est_np = (np.array(C)).copy()
+        if len(C) > len(C_est) and len(inliers_idx) > max_inliers:
+            C_est_np = np.array(C)
             F_est = F
-            print("Tamaño de C_est en esta iteracion = ", len(C_est_np))
-            if inliers >= max_inliers:
-                max_inliers = inliers
-                print(f"max_inliers = {max_inliers}")
+            print("Tamaño de C_est en esta iteracion =", len(C_est_np))
+            max_inliers = np.sum(inliers)
+            print(f"max_inliers = {max_inliers}")
+            best_inliers_idx = inliers_idx
+    
+    if len(best_inliers_idx) >= 8:
+        best_points_l, T_1 = normalizar_puntos(puntos_clave_l[best_inliers_idx])
+        best_points_d, T_2 = normalizar_puntos(puntos_clave_d[best_inliers_idx])
+        F_refinada = eight_point_algorithm(best_points_l, best_points_d, T_1, T_2)
+        F_est = F_refinada
+
     print(f"Total inliers found: {max_inliers} (threshold t={t})")
     #Filtrar luego para quedarse con las rectas con la orientación mas similar / común
-    print("C_est =")
-    print(C_est_np)
     print("F_est =")
     print(F_est)
     print("Terminamos RANSAC")
     return F_est, C_est_np
+
+def mostrar_lineas_epipolares_fundamental(F: np.ndarray, img_izq, img_der):
+
+    fig, (ax_izq, ax_der) = plt.subplots(1, 2, figsize=(12, 6), constrained_layout=True)
+    ax_izq.imshow(img_izq.astype(np.uint8))
+    ax_izq.set_title("Haz clic en la imagen izquierda")
+    ax_izq.axis('off')
+    ax_izq.set_xlim([0, img_izq.shape[1]])
+    ax_izq.set_ylim([img_izq.shape[0], 0])
+    ax_izq.set_aspect('equal', adjustable='box')
+
+    ax_der.imshow(img_der.astype(np.uint8))
+    ax_der.set_title("Líneas epipolares en la imagen derecha")
+    ax_der.axis('off')
+    ax_der.set_xlim([0, img_der.shape[1]])
+    ax_der.set_ylim([img_der.shape[0], 0])
+    ax_der.set_aspect('equal', adjustable='box')
+
+    def onclick(event):
+        if event.inaxes != ax_izq:
+            return
+
+        x, y = event.xdata, event.ydata
+        ax_izq.plot(x, y, 'ro')
+
+        x_h = np.array([x, y, 1.0])
+        l = F @ x_h
+
+        h, w = img_der.shape[0], img_der.shape[1]
+        x_vals = np.array([0, w])
+        y_vals = -(l[0] * x_vals + l[2]) / l[1]
+
+        ax_der.plot(x_vals, y_vals, 'r')
+        fig.canvas.draw()
+
+    fig.canvas.mpl_connect('button_press_event', onclick)
+    plt.show()
 
 def angle_bin(v, num_bins=36):
         angle = np.arctan2(v[1], v[0])
@@ -346,6 +421,71 @@ def check_matrix_properties(F, E, K, puntos_l, puntos_d):
     print(f"Epipolar constraint errors (first 5 points): {errors}")
     print(f"Mean epipolar error: {np.mean(np.abs(errors))}")
 
+def visualizar_epipolar_validation(img_l, img_d, F, puntos_l, puntos_d, E=None, K=None, num_points=5):
+    """
+    Visualize epipolar lines for validation (both F and E if provided)
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7))
+    img_l_rgb = cv2.cvtColor(img_l, cv2.COLOR_BGR2RGB)
+    img_d_rgb = cv2.cvtColor(img_d, cv2.COLOR_BGR2RGB)
+    ax1.imshow(img_l_rgb)
+    ax2.imshow(img_d_rgb)
+    for i in range(min(num_points, len(puntos_l))):
+        x1, y1 = puntos_l[i]
+        x2, y2 = puntos_d[i]
+        p1 = np.array([x1, y1, 1])
+        p2 = np.array([x2, y2, 1])
+        # F-based lines
+        l2 = F @ p1
+        l1 = F.T @ p2
+        # Plot points
+        ax1.plot(x1, y1, 'ro', markersize=5)
+        ax2.plot(x2, y2, 'bo', markersize=5)
+        h, w = img_l.shape[:2]
+        # F lines
+        if abs(l1[1]) > 1e-6:
+            y1_line = np.array([0, h])
+            x1_line = -(l1[1] * y1_line + l1[2]) / l1[0]
+        else:
+            x1_line = np.array([0, w])
+            y1_line = -(l1[0] * x1_line + l1[2]) / l1[1]
+        ax1.plot(x1_line, y1_line, 'g-', linewidth=1, label='F')
+        if abs(l2[1]) > 1e-6:
+            y2_line = np.array([0, h])
+            x2_line = -(l2[1] * y2_line + l2[2]) / l2[0]
+        else:
+            x2_line = np.array([0, w])
+            y2_line = -(l2[0] * x2_line + l2[2]) / l2[1]
+        ax2.plot(x2_line, y2_line, 'g-', linewidth=1, label='F')
+        # E-based lines (if E and K provided)
+        if E is not None and K is not None:
+            # Left image: line from right point
+            p2_norm = np.linalg.inv(K) @ p2
+            l1_E = E.T @ p2_norm
+            l1_E_pix = np.linalg.inv(K).T @ l1_E
+            if abs(l1_E_pix[1]) > 1e-6:
+                y1e = np.array([0, h])
+                x1e = -(l1_E_pix[1] * y1e + l1_E_pix[2]) / l1_E_pix[0]
+            else:
+                x1e = np.array([0, w])
+                y1e = -(l1_E_pix[0] * x1e + l1_E_pix[2]) / l1_E_pix[1]
+            ax1.plot(x1e, y1e, 'm--', linewidth=1, label='E')
+            # Right image: line from left point
+            p1_norm = np.linalg.inv(K) @ p1
+            l2_E = E @ p1_norm
+            l2_E_pix = np.linalg.inv(K).T @ l2_E
+            if abs(l2_E_pix[1]) > 1e-6:
+                y2e = np.array([0, h])
+                x2e = -(l2_E_pix[1] * y2e + l2_E_pix[2]) / l2_E_pix[0]
+            else:
+                x2e = np.array([0, w])
+                y2e = -(l2_E_pix[0] * x2e + l2_E_pix[2]) / l2_E_pix[1]
+            ax2.plot(x2e, y2e, 'm--', linewidth=1, label='E')
+    ax1.set_title('Left Image with Epipolar Lines')
+    ax2.set_title('Right Image with Epipolar Lines')
+    plt.tight_layout()
+    plt.show()
+
 def line_to_points(l, img_shape):
     """Convert line ax + by + c = 0 to two image-bound points."""
     a, b, c = l
@@ -376,10 +516,6 @@ def interactive_epipolar_view(img_l, img_d, F):
     Interactive function: user clicks a point in the left image,
     and the corresponding epipolar line is drawn in the right image.
     """
-    import matplotlib.pyplot as plt
-    import numpy as np
-    import cv2
-
     def line_to_points(l, shape):
         """
         Convert line l=[a, b, c] to two points clipped to image dimensions
@@ -1003,8 +1139,8 @@ def apply_homographies_and_visualize(img_l, img_d, HL, HD):
 
 def main():
     global RANSAC_THRESHOLD
-    img_l = cv2.imread('im_i.png', cv2.IMREAD_COLOR)
-    img_d = cv2.imread('im_d.png', cv2.IMREAD_COLOR)
+    img_l = cv2.imread('imn2_l.jpeg', cv2.IMREAD_COLOR)
+    img_d = cv2.imread('imn2_d.jpeg', cv2.IMREAD_COLOR)
     flag = True
 
     img_l_rect = None
@@ -1024,10 +1160,10 @@ def main():
 
     while(flag):
         P = np.array([
-        [1541.24, 0, 993.53, 0],  
-        [0, 1538.17, 757.98, 0],  
+        [1459.33, 0, 566.18, 0],  
+        [0, 1466.29, 995.23, 0],  
         [0, 0, 1, 0]   
-        ]) #Matriz Calibracion Jaime
+        ]) #Matriz Calibracion Nicolas
 
         def caso_0():
             nonlocal flag
@@ -1067,7 +1203,7 @@ def main():
             if not robust_sift_ran:
                 print("WARNING: You should run option 19 (robust SIFT) before running RANSAC!")
                 return "Aborted: Run option 19 first."
-            r = 5000
+            r = 100000
             F, puntos = ransac(puntos_clave_l, puntos_clave_d, r, RANSAC_THRESHOLD)
             ransac_ran = True
             # Extract points from the RANSAC results
@@ -1093,6 +1229,7 @@ def main():
             if F is None:
                 print("You must run RANSAC (option 22) first.")
                 return "Aborted: F not available."
+            #mostrar_lineas_epipolares_fundamental(F, img_l, img_d)
             interactive_epipolar_view(img_l, img_d, F)
             return "Interactive epipolar view finished."
 
@@ -1306,7 +1443,16 @@ def main():
             
             return "3D reconstruction completed."
 
+        def caso_m1():
+            image_path = "pruebas/nicolas"
+            imagenes = glob.glob(os.path.join(image_path, "*.jpeg"))  # Obtiene rutas completas
+
+            _, K_mtx, _, _, _ = calibracion_camara_chessboard(imagenes)
+            return f"esta es la matriz K = \n {K_mtx}"
+        
+
         switch = {
+            "-1": caso_m1,
             "0": caso_0,
             "1": caso_1,
             "2": caso_2,
