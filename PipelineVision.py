@@ -943,7 +943,7 @@ def visualize_rectified_correspondences(img_l_rect, img_d_rect, correspondences,
     for y in range(0, h, 50):
         plt.axhline(y=y, color='red', linestyle=':', alpha=0.3)
     
-    plt.title('Rectified Correspondences (Should be on same horizontal lines)')
+    plt.title('Rectified Correspondences')
     plt.axis('off')
     plt.show()
 
@@ -1145,7 +1145,7 @@ def main():
     visualize_disparity_map(img_l_rect, disparity_map)
     
     print("\nRectification homographies:")
-    print("H_l:")
+    print("H_l:") 
     print(H_l)
     print("H_r:")
     print(H_r)
